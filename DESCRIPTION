@@ -1,0 +1,30 @@
+Package: gpumetropolis
+Title: GPU-Portable Vendor-Agnostic Metropolis-Hastings Sampler
+Version: 0.0.0.9000
+Authors@R:
+    person("Pedro", "Carvalho Brom", , "pcbrom@gmail.com", role = c("aut", "cre"))
+Description: A random-walk Metropolis-Hastings sampler for Markov chain Monte
+    Carlo whose log-density evaluation kernel is written to be portable across
+    GPU vendors and CPU back ends from a single source. The sampler advances
+    many independent chains in one batched pass, evaluating the candidate
+    states of all chains with a single kernel call. This version ships a CPU
+    reference sampler for a Gaussian-mean model together with a distributional
+    equivalence harness based on the two-sample Kolmogorov-Smirnov test and the
+    split R-hat statistic of Gelman and Rubin (1992) <doi:10.1214/ss/1177011136>;
+    the portable GPU kernel is added in later versions. Dispatching the kernel
+    to a GPU helps when many chains are run or when the log-density is
+    expensive to evaluate over a large data set, and does not help for small
+    models run with few chains.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 8.0.0
+Config/rextendr/version: 0.5.0
+SystemRequirements: Cargo (Rust's package manager), rustc >= 1.65.0, xz
+Depends:
+    R (>= 4.2)
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+URL: https://github.com/pcbrom/gpumetropolis
+BugReports: https://github.com/pcbrom/gpumetropolis/issues
