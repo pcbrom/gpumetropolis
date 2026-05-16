@@ -1,18 +1,23 @@
-//! Whole-chain Metropolis kernel.
+//! Whole-chain Metropolis kernel, one block per chain.
 //!
-//! One CubeCL kernel runs the entire sampler: each thread is one chain and
-//! executes all `n_iter` Metropolis steps internally. The whole run is one
-//! kernel launch, not one launch per step. The time axis stays sequential
-//! within a thread, consistent with the caveat that a chain does not
-//! parallelise; the parallelism is across chains.
+//! One CubeCL kernel runs the entire sampler. A block (workgroup) of `BLOCK`
+//! threads is assigned to one chain. The `n_iter` Metropolis steps run
+//! sequentially for the block; within each step the threads of the block split
+//! the sum over the observations and combine their partial sums by a tree
+//! reduction in shared memory. The data sum, the cost that dominates, is
+//! `BLOCK`-way parallel.
 //!
-//! Random numbers come from a counter-based generator: a per-draw counter is
-//! hashed with the triple32 integer hash. This is reproducible from the seed
-//! and needs no stateful RNG carried across the kernel.
+//! This serves both regimes: few chains with large data (the threads of the
+//! one block parallelise the data sum) and many chains (one block each). The
+//! time axis stays sequential within a block, consistent with the caveat that
+//! a chain does not parallelise; the parallelism is the data sum and the
+//! chains.
 
 use cubecl::prelude::*;
 
 const STACK: usize = 32;
+const MAX_PARAMS: usize = 16;
+const BLOCK: u32 = 256;
 
 /// triple32 integer hash (Wellons). A high-quality `u32 -> u32` mix.
 #[cube]
@@ -35,16 +40,14 @@ fn rand_uniform(seedmix: u32, ctr: u32) -> f32 {
     (f32::cast_from(h) + 0.5) / 4294967296.0
 }
 
-/// Run one bytecode program once and return the scalar result. `params` is the
-/// chain's parameter buffer, `data` the observation buffer; `data_base` selects
-/// the observation. A program with no instructions returns zero.
+/// Run one bytecode program once and return the scalar result. A program with
+/// no instructions returns zero.
 #[cube]
 fn vm_eval(
     code: &Array<u32>,
     consts: &Array<f32>,
     n_instr: usize,
     params: &Array<f32>,
-    param_base: usize,
     data: &Array<f32>,
     data_base: usize,
 ) -> f32 {
@@ -58,7 +61,7 @@ fn vm_eval(
             stack[sp] = consts[arg];
             sp += 1;
         } else if op == 1 {
-            stack[sp] = params[param_base + arg];
+            stack[sp] = params[arg];
             sp += 1;
         } else if op == 2 {
             stack[sp] = data[data_base + arg];
@@ -96,35 +99,9 @@ fn vm_eval(
     result
 }
 
-/// Log-posterior of one chain: sum of the per-observation log-likelihood plus
-/// the log-prior.
-#[cube]
-fn log_post(
-    code: &Array<u32>,
-    consts: &Array<f32>,
-    n_instr: usize,
-    prior_code: &Array<u32>,
-    prior_consts: &Array<f32>,
-    prior_n: usize,
-    params: &Array<f32>,
-    param_base: usize,
-    data: &Array<f32>,
-    n_cols: usize,
-    n_obs: usize,
-) -> f32 {
-    let mut acc = 0.0f32;
-    let mut obs = 0usize;
-    while obs < n_obs {
-        acc += vm_eval(code, consts, n_instr, params, param_base, data,
-                       obs * n_cols);
-        obs += 1;
-    }
-    acc + vm_eval(prior_code, prior_consts, prior_n, params, param_base, data, 0)
-}
-
-/// Whole-chain batched random-walk Metropolis. One thread per chain.
+/// One block per chain; `BLOCK` threads per block share the data sum.
 #[cube(launch_unchecked)]
-fn metropolis_kernel(
+fn metropolis_block_kernel(
     code: &Array<u32>,
     consts: &Array<f32>,
     prior_code: &Array<u32>,
@@ -133,13 +110,18 @@ fn metropolis_kernel(
     init: &Array<f32>,
     proposal_sd: &Array<f32>,
     meta: &Array<u32>,        // [n_instr, n_params, n_cols, n_obs, n_iter, prior_n, seed]
-    state_buf: &mut Array<f32>,
-    prop_buf: &mut Array<f32>,
     out_draws: &mut Array<f32>,
     out_accept: &mut Array<f32>,
 ) {
-    let chain = ABSOLUTE_POS;
+    let chain = usize::cast_from(CUBE_POS);
+    let tid = usize::cast_from(UNIT_POS);
+    let block = usize::cast_from(BLOCK);
     let n_chains = out_accept.len();
+
+    let mut state = SharedMemory::<f32>::new(MAX_PARAMS);
+    let mut prop = SharedMemory::<f32>::new(MAX_PARAMS);
+    let mut partials = SharedMemory::<f32>::new(256usize);
+
     if chain < n_chains {
         let n_instr = usize::cast_from(meta[0]);
         let n_params = usize::cast_from(meta[1]);
@@ -148,55 +130,121 @@ fn metropolis_kernel(
         let n_iter = usize::cast_from(meta[4]);
         let prior_n = usize::cast_from(meta[5]);
         let seed = meta[6];
-
         let pbase = chain * n_params;
         let seedmix = seed + u32::cast_from(chain) * 2654435761u32;
 
+        // Thread 0 seeds the chain state from `init`.
+        if tid == 0 {
+            let mut j = 0usize;
+            while j < n_params {
+                state[j] = init[pbase + j];
+                j += 1;
+            }
+        }
+        sync_cube();
+
+        // Initial log-likelihood: each thread sums its slice of observations,
+        // then a tree reduction in shared memory combines the partials.
+        let mut local = Array::<f32>::new(MAX_PARAMS);
         let mut j = 0usize;
         while j < n_params {
-            state_buf[pbase + j] = init[pbase + j];
+            local[j] = state[j];
             j += 1;
         }
-        let mut cur = log_post(code, consts, n_instr, prior_code, prior_consts,
-                               prior_n, state_buf, pbase, data, n_cols, n_obs);
+        let mut part = 0.0f32;
+        let mut obs = tid;
+        while obs < n_obs {
+            part += vm_eval(code, consts, n_instr, &local, data, obs * n_cols);
+            obs += block;
+        }
+        partials[tid] = part;
+        sync_cube();
+        let mut stride = block / 2usize;
+        while stride >= 1usize {
+            if tid < stride {
+                partials[tid] = partials[tid] + partials[tid + stride];
+            }
+            sync_cube();
+            stride /= 2usize;
+        }
+
+        let mut cur = 0.0f32;
         let mut accepts: u32 = 0u32;
         let mut ctr: u32 = 0u32;
-        let two_pi = 6.2831853f32;
+        if tid == 0 {
+            cur = partials[0] + vm_eval(prior_code, prior_consts, prior_n,
+                                       &local, data, 0);
+        }
 
+        let two_pi = 6.2831853f32;
         let mut t = 0usize;
         while t < n_iter {
-            j = 0usize;
-            while j < n_params {
-                ctr += 1u32;
-                let u1 = rand_uniform(seedmix, ctr);
-                ctr += 1u32;
-                let u2 = rand_uniform(seedmix, ctr);
-                let z = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
-                prop_buf[pbase + j] = state_buf[pbase + j] + proposal_sd[j] * z;
-                j += 1;
-            }
-            let plp = log_post(code, consts, n_instr, prior_code, prior_consts,
-                               prior_n, prop_buf, pbase, data, n_cols, n_obs);
-            ctr += 1u32;
-            let u = rand_uniform(seedmix, ctr);
-            if u.ln() < plp - cur {
-                j = 0usize;
-                while j < n_params {
-                    state_buf[pbase + j] = prop_buf[pbase + j];
-                    j += 1;
+            // Thread 0 proposes; the block sees the proposal after the barrier.
+            if tid == 0 {
+                let mut k = 0usize;
+                while k < n_params {
+                    ctr += 1u32;
+                    let u1 = rand_uniform(seedmix, ctr);
+                    ctr += 1u32;
+                    let u2 = rand_uniform(seedmix, ctr);
+                    let z = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
+                    prop[k] = state[k] + proposal_sd[k] * z;
+                    k += 1;
                 }
-                cur = plp;
-                accepts += 1u32;
             }
-            j = 0usize;
-            while j < n_params {
-                out_draws[t + n_iter * (chain + n_chains * j)] =
-                    state_buf[pbase + j];
-                j += 1;
+            sync_cube();
+
+            // Block-parallel log-likelihood of the proposal.
+            let mut pk = 0usize;
+            while pk < n_params {
+                local[pk] = prop[pk];
+                pk += 1;
             }
+            let mut ppart = 0.0f32;
+            let mut pobs = tid;
+            while pobs < n_obs {
+                ppart += vm_eval(code, consts, n_instr, &local, data,
+                                 pobs * n_cols);
+                pobs += block;
+            }
+            partials[tid] = ppart;
+            sync_cube();
+            let mut s = block / 2usize;
+            while s >= 1usize {
+                if tid < s {
+                    partials[tid] = partials[tid] + partials[tid + s];
+                }
+                sync_cube();
+                s /= 2usize;
+            }
+
+            // Thread 0 accepts or rejects and records the draw.
+            if tid == 0 {
+                let plp = partials[0] + vm_eval(prior_code, prior_consts,
+                                                prior_n, &local, data, 0);
+                ctr += 1u32;
+                let u = rand_uniform(seedmix, ctr);
+                if u.ln() < plp - cur {
+                    let mut m = 0usize;
+                    while m < n_params {
+                        state[m] = prop[m];
+                        m += 1;
+                    }
+                    cur = plp;
+                    accepts += 1u32;
+                }
+                let mut m = 0usize;
+                while m < n_params {
+                    out_draws[t + n_iter * (chain + n_chains * m)] = state[m];
+                    m += 1;
+                }
+            }
+            sync_cube();
             t += 1;
         }
-        out_accept[chain] = f32::cast_from(accepts) / f32::cast_from(n_iter);
+        if tid == 0 {
+            out_accept[chain] = f32::cast_from(accepts) / f32::cast_from(n_iter);
+        }
     }
 }
 
@@ -210,7 +258,7 @@ pub struct ChainResult {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_chain<R: Runtime>(
+fn run_block<R: Runtime>(
     code: &[u32],
     consts: &[f32],
     prior_code: &[u32],
@@ -246,17 +294,15 @@ fn run_chain<R: Runtime>(
     let meta_h = client.create_from_slice(u32::as_bytes(&meta));
 
     let f32_size = core::mem::size_of::<f32>();
-    let state_h = client.empty(n_chains * n_params * f32_size);
-    let prop_h = client.empty(n_chains * n_params * f32_size);
     let draws_h = client.empty(n_iter * n_chains * n_params * f32_size);
     let accept_h = client.empty(n_chains * f32_size);
 
-    let block = 256u32;
-    let count = CubeCount::Static((n_chains as u32).div_ceil(block), 1, 1);
-    let dim = CubeDim { x: block, y: 1, z: 1 };
+    // One block per chain, 256 threads per block.
+    let count = CubeCount::Static(n_chains as u32, 1, 1);
+    let dim = CubeDim { x: 256, y: 1, z: 1 };
 
     unsafe {
-        metropolis_kernel::launch_unchecked::<R>(
+        metropolis_block_kernel::launch_unchecked::<R>(
             &client,
             count,
             dim,
@@ -268,8 +314,6 @@ fn run_chain<R: Runtime>(
             ArrayArg::from_raw_parts(init_h, init.len()),
             ArrayArg::from_raw_parts(psd_h, proposal_sd.len()),
             ArrayArg::from_raw_parts(meta_h, meta.len()),
-            ArrayArg::from_raw_parts(state_h, n_chains * n_params),
-            ArrayArg::from_raw_parts(prop_h, n_chains * n_params),
             ArrayArg::from_raw_parts(draws_h.clone(), n_iter * n_chains * n_params),
             ArrayArg::from_raw_parts(accept_h.clone(), n_chains),
         );
@@ -288,7 +332,9 @@ fn run_chain<R: Runtime>(
     }
 }
 
-/// Run the whole-chain Metropolis sampler on the chosen backend.
+/// Run the whole-chain Metropolis sampler on the chosen backend. The CPU
+/// backend uses a native Rust implementation; the GPU backends use the
+/// block-per-chain kernel.
 #[allow(clippy::too_many_arguments)]
 pub fn gpu_metropolis_chain(
     code: &[u32],
@@ -306,17 +352,15 @@ pub fn gpu_metropolis_chain(
     backend: crate::gpu::Backend,
 ) -> ChainResult {
     match backend {
-        // The CPU backend uses a native Rust implementation, not the CubeCL
-        // CPU runtime, which is slow for this interpreter-style kernel.
         crate::gpu::Backend::Cpu => crate::cpu_native::run(
             code, consts, prior_code, prior_consts, n_params, data, n_cols,
             n_obs, init, proposal_sd, n_iter, seed,
         ),
-        crate::gpu::Backend::Cuda => run_chain::<cubecl::cuda::CudaRuntime>(
+        crate::gpu::Backend::Cuda => run_block::<cubecl::cuda::CudaRuntime>(
             code, consts, prior_code, prior_consts, n_params, data, n_cols,
             n_obs, init, proposal_sd, n_iter, seed,
         ),
-        crate::gpu::Backend::Vulkan => run_chain::<cubecl::wgpu::WgpuRuntime>(
+        crate::gpu::Backend::Vulkan => run_block::<cubecl::wgpu::WgpuRuntime>(
             code, consts, prior_code, prior_consts, n_params, data, n_cols,
             n_obs, init, proposal_sd, n_iter, seed,
         ),
