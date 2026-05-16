@@ -66,3 +66,26 @@ test_that("the CUDA backend matches the CPU backend distributionally", {
   res <- ks_equivalence(cpu$draws[, , 1], cuda$draws[, , 1])
   expect_true(res$equivalent)
 })
+
+test_that("the Vulkan backend matches the CPU backend distributionally", {
+  testthat::skip_on_cran()
+  vulkan_ok <- tryCatch({
+    mm <- gpum_model(~ -((y - mu)^2) / 8, params = "mu", data = "y")
+    gpu_metropolis(mm, data = list(y = rnorm(100)), n_iter = 10,
+                   n_chains = 2, backend = "vulkan")
+    TRUE
+  }, error = function(e) FALSE)
+  testthat::skip_if(!vulkan_ok, "no Vulkan backend available")
+
+  set.seed(4)
+  y <- rnorm(4000, mean = 4, sd = 2)
+  m <- gpum_model(~ -((y - mu)^2) / 8, params = "mu", data = "y")
+  cpu <- gpu_metropolis(m, data = list(y = y), proposal_sd = 0.06,
+                        n_iter = 3000, n_chains = 4, seed = 5,
+                        backend = "cpu")
+  vulkan <- gpu_metropolis(m, data = list(y = y), proposal_sd = 0.06,
+                           n_iter = 3000, n_chains = 4, seed = 5,
+                           backend = "vulkan")
+  res <- ks_equivalence(cpu$draws[, , 1], vulkan$draws[, , 1])
+  expect_true(res$equivalent)
+})
