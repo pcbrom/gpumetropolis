@@ -7,34 +7,22 @@ NULL
 
 #' Evaluate the batched Gaussian-mean log-density kernel.
 #'
-#' Internal helper that exposes the compute kernel in isolation so it can be
-#' checked directly. `candidates` holds one mean proposal per chain; the return
-#' value holds one log-density per chain.
+#' Internal helper behind the Phase 0 reference sampler.
 #' @noRd
 rust_log_density_batch <- function(candidates, data, sigma) .Call(wrap__rust_log_density_batch, candidates, data, sigma)
 
 #' Run the batched random-walk Metropolis sampler (CPU reference).
 #'
-#' Internal worker behind the R function `metropolis_gaussian_mean()`. Returns
-#' a list with the `n_iter` by `n_chains` matrix of draws and the per-chain
-#' acceptance rate.
+#' Internal worker behind the R function `metropolis_gaussian_mean()`.
 #' @noRd
 rust_metropolis_gaussian_mean <- function(data, sigma, n_iter, init, proposal_sd, seed) .Call(wrap__rust_metropolis_gaussian_mean, data, sigma, n_iter, init, proposal_sd, seed)
 
-#' Evaluate the batched Gaussian-mean log-density through the CubeCL kernel.
+#' Names of the compute backends compiled into this build.
 #'
-#' Internal helper. `backend` selects the compute runtime: "cpu" or "cuda".
-#' Used to check that the CubeCL path is wired into the package build.
+#' Always includes "cpu"; "cuda" and "vulkan" are present only when the
+#' matching Cargo feature was enabled at build time.
 #' @noRd
-rust_gaussian_logdens_gpu <- function(candidates, data, sigma, backend) .Call(wrap__rust_gaussian_logdens_gpu, candidates, data, sigma, backend)
-
-#' Evaluate a compiled log-likelihood bytecode program over all chains.
-#'
-#' Internal worker behind the generic API. `code` holds opcode/arg pairs,
-#' `params` holds `n_chains * n_params` values grouped by chain. Returns one
-#' log-likelihood sum per chain.
-#' @noRd
-rust_loglik_sum <- function(code, consts, n_params, data, n_cols, n_obs, params, n_chains, backend) .Call(wrap__rust_loglik_sum, code, consts, n_params, data, n_cols, n_obs, params, n_chains, backend)
+rust_available_backends <- function() .Call(wrap__rust_available_backends)
 
 #' Run the generic batched Metropolis sampler over a compiled model.
 #'

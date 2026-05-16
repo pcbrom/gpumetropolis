@@ -171,9 +171,22 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
   }
 
   # Resolve "auto" once the chain count is known: a GPU does not help a single
-  # chain, so few chains run on the CPU and many chains on CUDA.
+  # chain, so few chains run on the CPU and many chains on a GPU backend, if a
+  # GPU backend was compiled into this build.
+  avail <- rust_available_backends()
   if (identical(backend, "auto")) {
-    backend <- if (n_chains >= 32L) "cuda" else "cpu"
+    backend <- if (n_chains >= 32L && "cuda" %in% avail) {
+      "cuda"
+    } else if (n_chains >= 32L && "vulkan" %in% avail) {
+      "vulkan"
+    } else {
+      "cpu"
+    }
+  } else if (!(backend %in% avail)) {
+    stop("backend '", backend, "' is not available in this build. ",
+         "Available: ", paste(avail, collapse = ", "),
+         ". Rebuild the package with the matching Cargo feature.",
+         call. = FALSE)
   }
 
   res <- rust_gpu_metropolis(

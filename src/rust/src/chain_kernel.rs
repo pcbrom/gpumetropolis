@@ -257,7 +257,7 @@ pub struct ChainResult {
     pub accept_rate: Vec<f32>,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, dead_code)]
 fn run_block<R: Runtime>(
     code: &[u32],
     consts: &[f32],
@@ -359,20 +359,36 @@ pub fn gpu_metropolis_chain(
             n_obs, init, proposal_sd, n_iter, seed,
         );
     }
-    // GPU backends: cast the float inputs to f32 for the device kernel.
-    let f32v = |s: &[f64]| -> Vec<f32> { s.iter().map(|&v| v as f32).collect() };
-    let (c, pc, d, i, p) = (
-        f32v(consts), f32v(prior_consts), f32v(data), f32v(init),
-        f32v(proposal_sd),
-    );
-    match backend {
-        crate::gpu::Backend::Cuda => run_block::<cubecl::cuda::CudaRuntime>(
-            code, &c, prior_code, &pc, n_params, &d, n_cols, n_obs, &i, &p,
-            n_iter, seed,
-        ),
-        _ => run_block::<cubecl::wgpu::WgpuRuntime>(
-            code, &c, prior_code, &pc, n_params, &d, n_cols, n_obs, &i, &p,
-            n_iter, seed,
-        ),
+    // GPU backends are compiled in only when the matching Cargo feature is on.
+    #[cfg(any(feature = "cuda", feature = "vulkan"))]
+    {
+        let f32v = |s: &[f64]| -> Vec<f32> {
+            s.iter().map(|&v| v as f32).collect()
+        };
+        let (c, pc, d, i, p) = (
+            f32v(consts), f32v(prior_consts), f32v(data), f32v(init),
+            f32v(proposal_sd),
+        );
+        match backend {
+            #[cfg(feature = "cuda")]
+            crate::gpu::Backend::Cuda => {
+                return run_block::<cubecl::cuda::CudaRuntime>(
+                    code, &c, prior_code, &pc, n_params, &d, n_cols, n_obs,
+                    &i, &p, n_iter, seed,
+                );
+            }
+            #[cfg(feature = "vulkan")]
+            crate::gpu::Backend::Vulkan => {
+                return run_block::<cubecl::wgpu::WgpuRuntime>(
+                    code, &c, prior_code, &pc, n_params, &d, n_cols, n_obs,
+                    &i, &p, n_iter, seed,
+                );
+            }
+            _ => {}
+        }
     }
+    panic!(
+        "GPU backend not available in this build; rebuild gpumetropolis with \
+         the 'cuda' or 'vulkan' Cargo feature"
+    )
 }

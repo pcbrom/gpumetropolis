@@ -22,11 +22,11 @@ Useful links:
 
 }
 \author{
-\strong{Maintainer}: Pedro Carvalho Brom \email{pcbrom@gmail.com}
+\strong{Maintainer}: Pedro Carvalho Brom \email{pcbrom@gmail.com} (\href{https://orcid.org/0000-0002-1288-7695}{ORCID}) [copyright holder]
 
 Authors:
 \itemize{
-  \item Pedro Carvalho Brom \email{pcbrom@gmail.com}
+  \item Pedro Carvalho Brom \email{pcbrom@gmail.com} (\href{https://orcid.org/0000-0002-1288-7695}{ORCID}) [copyright holder]
 }
 
 }
