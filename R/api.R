@@ -103,8 +103,10 @@ print.gpum_model <- function(x, ...) {
 #' @param n_chains Number of chains. Used only when `init` is `NULL`.
 #'   Default 4.
 #' @param seed Integer seed. Each chain runs an independent PCG64 stream.
-#' @param backend Compute backend: `"cpu"`, `"cuda"` (NVIDIA-native) or
-#'   `"vulkan"` (vendor-agnostic, through wgpu). Default `"cpu"`.
+#' @param backend Compute backend: `"cpu"`, `"cuda"` (NVIDIA-native),
+#'   `"vulkan"` (vendor-agnostic, through wgpu), or `"auto"`. `"auto"` picks
+#'   the CPU for few chains and CUDA for many chains, since a GPU does not help
+#'   a single chain. Default `"cpu"`.
 #'
 #' @return An object of class `gpum_fit`: a list with `draws` (an `n_iter` by
 #'   `n_chains` by `n_params` array), `accept_rate` and the run metadata.
@@ -121,7 +123,7 @@ print.gpum_model <- function(x, ...) {
 #' @export
 gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
                            n_iter = 2000L, n_chains = 4L, seed = 1L,
-                           backend = c("cpu", "cuda", "vulkan")) {
+                           backend = c("cpu", "cuda", "vulkan", "auto")) {
   if (!inherits(model, "gpum_model")) {
     stop("`model` must be a gpum_model from gpum_model().", call. = FALSE)
   }
@@ -166,6 +168,12 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
   proposal_sd <- rep_len(as.numeric(proposal_sd), np)
   if (any(!is.finite(proposal_sd)) || any(proposal_sd <= 0)) {
     stop("`proposal_sd` must be positive and finite.", call. = FALSE)
+  }
+
+  # Resolve "auto" once the chain count is known: a GPU does not help a single
+  # chain, so few chains run on the CPU and many chains on CUDA.
+  if (identical(backend, "auto")) {
+    backend <- if (n_chains >= 32L) "cuda" else "cpu"
   }
 
   res <- rust_gpu_metropolis(
