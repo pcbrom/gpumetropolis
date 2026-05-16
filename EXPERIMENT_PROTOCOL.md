@@ -1,9 +1,13 @@
 # Experiment protocol: characterising the advantage regime of gpumetropolis
 
-Version 1.2. Status: FROZEN. Pre-registered and approved by the author before
-any cell of the registered experiment is executed. Freeze date of v1.0:
-2026-05-16. Amendments v1.1 and v1.2: 2026-05-16. See section 14 for the
+Version 0.3. Status: FROZEN. Pre-registered and approved by the author before
+any cell of the registered experiment is executed. Freeze date of v0.1:
+2026-05-16. Amendments v0.2 and v0.3: 2026-05-16. See section 14 for the
 amendment record.
+
+The protocol is versioned on the 0.x line because it is a living
+pre-registration that is still being refined ahead of the registered run; a
+1.x label would imply a final document.
 
 Pre-registration in the strict sense: this document fixes the hypotheses,
 design, metrics and decision rules before any result exists. The dated commit
@@ -43,7 +47,7 @@ are tested only in the second execution stage (section 9).
 
 | ID | Prediction | Supported when | Refuted when |
 |---|---|---|---|
-| H1 correctness | gpumetropolis and every competitor sample the same target posterior | across the family of all H1 KS tests of a backend, no rejection survives Holm-Bonferroni FWER control at family level `0.05` (see section 6.1, amended in v1.1); and the per-backend rate of split R-hat exceeding `1.01` is consistent with estimation noise | a rejection survives the correction, or R-hat shows systematic non-convergence; the defect is fixed before any speed is measured |
+| H1 correctness | gpumetropolis and every competitor sample the same target posterior | across the family of all H1 KS tests of a backend, no rejection survives Holm-Bonferroni FWER control at family level `0.05` (see section 6.1, amended in v0.2); and the per-backend rate of split R-hat exceeding `1.01` is consistent with estimation noise | a rejection survives the correction, or R-hat shows systematic non-convergence; the defect is fixed before any speed is measured |
 | H2 CPU parity | in the CPU regime, gpumetropolis-CPU does not dominate the competitors; the ratio of median ESS/s between gpumetropolis-CPU and the best competitor stays in `[0.5, 2]` for N up to `1e4` | the median ratio lies in `[0.5, 2]` with a bootstrap CI contained in `[0.33, 3]` | ratio `< 0.5` signals an inefficiency to fix; ratio `> 2` requires a harness audit, since it contradicts Caveat 4 |
 | H3 GPU advantage regime | there exists an `N*` such that, for `N > N*`, the GPU backend of gpumetropolis beats the best CPU backend in ESS/s by a factor `>= 2`; the prediction places `N*` in the order `1e4` to `1e5` | some tested `N` up to `1e7` shows a median ratio `>= 2` with the lower CI bound `> 1` | no `N` up to `1e7` shows a median ratio `>= 2`: the value proposition fails and the scope is reassessed |
 | H4 portability | the kernel passes distributional equivalence on NVIDIA and on AMD | the KS test does not reject at `alpha = 0.01` and R-hat `< 1.01` on both vendors | failure on any vendor beyond the development one |
@@ -96,7 +100,7 @@ the package's claim. See section 11.
 A cell enters the speed analysis only after passing the H1 gate. The speed of
 an incorrect sampler is not measured.
 
-The gate, as amended in v1.1, works as follows. For each replication of each
+The gate, as amended in v0.2, works as follows. For each replication of each
 valid cell, a two-sample KS test compares the thinned pooled draws against an
 exact sample from the reference truth. The draws are thinned to the effective
 sample size before the test, because the KS test assumes independent draws.
@@ -163,7 +167,7 @@ quantity).
 - CPU baseline machine: AMD Ryzen 9 9900X3D, 24 threads. GPU backend machine:
   NVIDIA RTX 4090 and an AMD GPU on the same host.
 
-### 7.1 Compute budget and the budget-exceeded outcome (amended in v1.2)
+### 7.1 Compute budget and the budget-exceeded outcome (amended in v0.3)
 
 The factorial spans `N` up to `1e7` and `C` up to `32768`. The cost of one CPU
 run is on the order of `n_iter * C * N`. The largest cells are infeasible on a
@@ -217,6 +221,11 @@ dominance. The experiment characterises; it is not a dominance gatekeeper.
   generalise to high dimension and the report says so.
 - Implementation maturity: the competitors have years of tuning; a
   gpumetropolis disadvantage may be one of implementation, not of algorithm.
+- A backend whose log-density is an R callback (mcmc, MCMCpack) pays
+  interpreter overhead per iteration, while a backend that compiles the density
+  (gpumetropolis, nimble, Stan, greta) does not. A speed gap between these two
+  groups is partly an implementation artefact, not an algorithmic result, and
+  the interpretation records it.
 - CPU-GPU transfer overhead varies with driver and bus; it is measured and
   reported, not assumed.
 - ESS estimation is itself noisy; it is made uniform with `coda` and smoothed
@@ -251,9 +260,15 @@ Amendments are disclosed here with date and rationale. The git history holds
 the verbatim earlier version. An amendment is admissible only when it is made
 before the registered run of the affected stage and is recorded transparently.
 
-### v1.1, 2026-05-16: H1 correctness criterion
+Note on numbering: the first three commits of this document labelled it 1.0,
+1.1 and 1.2. It was renumbered to the 0.x line (0.1, 0.2, 0.3) on 2026-05-16,
+since a 1.x label would imply a final document while the protocol is still
+being refined ahead of the registered run. The earlier commit messages keep
+their original labels; the mapping is 1.0 to 0.1, 1.1 to 0.2, 1.2 to 0.3.
 
-Change. The v1.0 H1 criterion required that the KS test "does not reject at
+### v0.2, 2026-05-16: H1 correctness criterion
+
+Change. The v0.1 H1 criterion required that the KS test "does not reject at
 `alpha = 0.01` ... in every valid cell". Section 3 and section 6.1 are amended
 so the H1 verdict is taken on the family of KS tests of a backend, with
 Holm-Bonferroni control of the family-wise error rate at `0.05`, plus a
@@ -262,7 +277,7 @@ secondary per-backend rejection-rate diagnostic.
 Rationale. Stage A runs on the order of 40000 H1 KS tests (1008 cells times 40
 replications). At a fixed per-test level a correct sampler still rejects at
 that rate, so "no rejection in any cell" is not satisfiable by any sampler,
-correct or not. The v1.0 criterion was therefore a logical defect, not a
+correct or not. The v0.1 criterion was therefore a logical defect, not a
 discriminating test.
 
 Discovery. The defect was found while validating the harness with a pilot. The
@@ -276,7 +291,7 @@ over a rejection-rate-equivalence route. Holm-Bonferroni is used rather than
 plain Bonferroni because it controls the same family-wise error rate while
 dominating Bonferroni in power.
 
-### v1.2, 2026-05-16: compute budget per run
+### v0.3, 2026-05-16: compute budget per run
 
 Change. Section 7.1 is added: each single run gets a wall-clock budget `B`
 (default 120 s, single-threaded); a run reaching `B` is recorded as
@@ -287,7 +302,7 @@ Rationale. The cost of one CPU run scales as `n_iter * C * N`. With the frozen
 factorial, the largest cell costs on the order of `1e15` operations, hundreds
 of days on one CPU core. The full Stage A factorial is therefore not
 completable on a CPU, by arithmetic, not by choice of effort. This was known
-in spirit from Caveat 3 but was not made operational in v1.0.
+in spirit from Caveat 3 but was not made operational in v0.1.
 
 Why this is not a weakening of the design. The infeasible cells are precisely
 the regime the GPU exists to serve. A `budget-exceeded` record is the honest
