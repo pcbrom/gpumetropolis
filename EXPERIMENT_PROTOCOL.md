@@ -1,12 +1,14 @@
 # Experiment protocol: characterising the advantage regime of gpumetropolis
 
-Version 1.0. Status: FROZEN. Pre-registered and approved by the author before
-any cell of the experiment is executed. Freeze date: 2026-05-16.
+Version 1.1. Status: FROZEN. Pre-registered and approved by the author before
+any cell of the registered experiment is executed. Freeze date of v1.0:
+2026-05-16. Amendment to v1.1: 2026-05-16. See section 14 for the amendment
+record.
 
 Pre-registration in the strict sense: this document fixes the hypotheses,
 design, metrics and decision rules before any result exists. The dated commit
-that freezes it is the verifiable timestamp. No cell of the experiment is run
-before the freeze.
+that freezes it is the verifiable timestamp. No cell of the registered
+experiment is run before the freeze.
 
 ## 1. Objective
 
@@ -41,7 +43,7 @@ are tested only in the second execution stage (section 9).
 
 | ID | Prediction | Supported when | Refuted when |
 |---|---|---|---|
-| H1 correctness | gpumetropolis and every competitor sample the same target posterior | the two-sample KS test against the reference truth does not reject at `alpha = 0.01` after thinning, and R-hat `< 1.01`, in every valid cell | failure in any cell signals a defect; it is fixed before any speed is measured |
+| H1 correctness | gpumetropolis and every competitor sample the same target posterior | across the family of all H1 KS tests of a backend, no rejection survives Holm-Bonferroni FWER control at family level `0.05` (see section 6.1, amended in v1.1); and the per-backend rate of split R-hat exceeding `1.01` is consistent with estimation noise | a rejection survives the correction, or R-hat shows systematic non-convergence; the defect is fixed before any speed is measured |
 | H2 CPU parity | in the CPU regime, gpumetropolis-CPU does not dominate the competitors; the ratio of median ESS/s between gpumetropolis-CPU and the best competitor stays in `[0.5, 2]` for N up to `1e4` | the median ratio lies in `[0.5, 2]` with a bootstrap CI contained in `[0.33, 3]` | ratio `< 0.5` signals an inefficiency to fix; ratio `> 2` requires a harness audit, since it contradicts Caveat 4 |
 | H3 GPU advantage regime | there exists an `N*` such that, for `N > N*`, the GPU backend of gpumetropolis beats the best CPU backend in ESS/s by a factor `>= 2`; the prediction places `N*` in the order `1e4` to `1e5` | some tested `N` up to `1e7` shows a median ratio `>= 2` with the lower CI bound `> 1` | no `N` up to `1e7` shows a median ratio `>= 2`: the value proposition fails and the scope is reassessed |
 | H4 portability | the kernel passes distributional equivalence on NVIDIA and on AMD | the KS test does not reject at `alpha = 0.01` and R-hat `< 1.01` on both vendors | failure on any vendor beyond the development one |
@@ -93,6 +95,30 @@ the package's claim. See section 11.
 
 A cell enters the speed analysis only after passing the H1 gate. The speed of
 an incorrect sampler is not measured.
+
+The gate, as amended in v1.1, works as follows. For each replication of each
+valid cell, a two-sample KS test compares the thinned pooled draws against an
+exact sample from the reference truth. The draws are thinned to the effective
+sample size before the test, because the KS test assumes independent draws.
+This yields one p-value per replication, on the order of tens of thousands of
+tests in stage A. The H1 verdict is not taken per test: that would be
+unsatisfiable, since at any fixed per-test level a correct sampler still
+produces spurious rejections at that rate. Instead the p-values of a backend
+are treated as a family and the Holm-Bonferroni step-down procedure controls
+the family-wise error rate at `0.05`. H1 is supported for that backend when no
+rejection survives the procedure.
+
+Recorded caveat: family-wise control makes the gate conservative as a
+bug-detector. It has limited power against a small defect confined to one
+corner of the factorial. To keep such a defect visible, the KS rejection rate
+at the nominal per-test level is also reported per backend and per model as a
+secondary diagnostic. The secondary diagnostic does not change the H1 verdict;
+a rate well above nominal is a recorded signal for inspection even when no
+single test survives the correction.
+
+R-hat is recorded for every run as a convergence diagnostic. With the
+iteration tuning of section 7 the registered runs target R-hat well below
+1.01; the per-backend exceedance rate is reported alongside the KS family.
 
 ### 6.2 Primary efficiency metric
 
@@ -196,3 +222,36 @@ dominance. The experiment characterises; it is not a dominance gatekeeper.
   SIAM.
 - Plummer, M. et al. (2006). CODA: Convergence diagnosis and output analysis
   for MCMC. R News 6(1), 7-11.
+- Holm, S. (1979). A simple sequentially rejective multiple test procedure.
+  Scandinavian Journal of Statistics 6(2), 65-70.
+
+## 14. Amendments
+
+Amendments are disclosed here with date and rationale. The git history holds
+the verbatim earlier version. An amendment is admissible only when it is made
+before the registered run of the affected stage and is recorded transparently.
+
+### v1.1, 2026-05-16: H1 correctness criterion
+
+Change. The v1.0 H1 criterion required that the KS test "does not reject at
+`alpha = 0.01` ... in every valid cell". Section 3 and section 6.1 are amended
+so the H1 verdict is taken on the family of KS tests of a backend, with
+Holm-Bonferroni control of the family-wise error rate at `0.05`, plus a
+secondary per-backend rejection-rate diagnostic.
+
+Rationale. Stage A runs on the order of 40000 H1 KS tests (1008 cells times 40
+replications). At a fixed per-test level a correct sampler still rejects at
+that rate, so "no rejection in any cell" is not satisfiable by any sampler,
+correct or not. The v1.0 criterion was therefore a logical defect, not a
+discriminating test.
+
+Discovery. The defect was found while validating the harness with a pilot. The
+pilot is a pipeline check; it is not part of the registered experiment and its
+numbers are not registered results. This amendment was made before the
+registered stage A run began, so the pre-registration of the registered run is
+intact.
+
+Author decision. The author selected the multiple-testing-correction route
+over a rejection-rate-equivalence route. Holm-Bonferroni is used rather than
+plain Bonferroni because it controls the same family-wise error rate while
+dominating Bonferroni in power.
