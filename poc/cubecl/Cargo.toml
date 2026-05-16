@@ -1,0 +1,7 @@
+[package]
+name = "cubecl_poc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cubecl = { version = "0.10.0", features = ["cpu", "cuda"] }
