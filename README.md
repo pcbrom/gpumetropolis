@@ -115,6 +115,15 @@ The development follows a phased plan.
   reduction, the native CPU backend, and the reduced benchmark run below.
 - Phase 3: the full registered factorial, then CRAN submission.
 
+## Roadmap
+
+The direction beyond the first CRAN release is recorded, tiered, in
+[`ROADMAP.md`](https://github.com/pcbrom/gpumetropolis/blob/main/ROADMAP.md):
+the in-scope Metropolis-Hastings-family next steps (adaptive Metropolis,
+differential evolution MCMC, parallel tempering), the optimisation layers, and
+the larger directions. The long arc is a portable probabilistic computing
+runtime; the current package is its foundation.
+
 ## Benchmark
 
 The package carries a pre-registered experiment that characterises, in a
