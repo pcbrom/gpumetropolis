@@ -1,9 +1,9 @@
 # Experiment protocol: characterising the advantage regime of gpumetropolis
 
-Version 1.1. Status: FROZEN. Pre-registered and approved by the author before
+Version 1.2. Status: FROZEN. Pre-registered and approved by the author before
 any cell of the registered experiment is executed. Freeze date of v1.0:
-2026-05-16. Amendment to v1.1: 2026-05-16. See section 14 for the amendment
-record.
+2026-05-16. Amendments v1.1 and v1.2: 2026-05-16. See section 14 for the
+amendment record.
 
 Pre-registration in the strict sense: this document fixes the hypotheses,
 design, metrics and decision rules before any result exists. The dated commit
@@ -163,6 +163,26 @@ quantity).
 - CPU baseline machine: AMD Ryzen 9 9900X3D, 24 threads. GPU backend machine:
   NVIDIA RTX 4090 and an AMD GPU on the same host.
 
+### 7.1 Compute budget and the budget-exceeded outcome (amended in v1.2)
+
+The factorial spans `N` up to `1e7` and `C` up to `32768`. The cost of one CPU
+run is on the order of `n_iter * C * N`. The largest cells are infeasible on a
+CPU by design: that infeasibility is the reason the package exists, and Stage B
+runs those cells on the GPU. The CPU baseline is not required to complete them.
+
+Each single run is therefore given a wall-clock budget `B`, fixed before the
+run and recorded, default `B = 120` seconds, single-threaded. A run that
+reaches `B` is terminated and recorded with outcome `budget-exceeded` and the
+elapsed budget. A `budget-exceeded` outcome is a datum, not a failure: it
+bounds the backend's ESS/s from above in that cell and, set against a Stage B
+GPU cell that completes, is direct evidence for H3.
+
+A cell verdict uses the replications that completed. A cell whose 40
+replications all hit `B` is recorded as `intractable` for that backend. Runs
+are executed in parallel across CPU cores; each run stays single-threaded, so
+parallelism raises throughput without changing the per-run timing that the
+ESS/s metric depends on.
+
 ## 8. Statistical analysis
 
 Per cell, the median ESS/s and its 95 percent bootstrap confidence interval
@@ -255,3 +275,21 @@ Author decision. The author selected the multiple-testing-correction route
 over a rejection-rate-equivalence route. Holm-Bonferroni is used rather than
 plain Bonferroni because it controls the same family-wise error rate while
 dominating Bonferroni in power.
+
+### v1.2, 2026-05-16: compute budget per run
+
+Change. Section 7.1 is added: each single run gets a wall-clock budget `B`
+(default 120 s, single-threaded); a run reaching `B` is recorded as
+`budget-exceeded`; a cell whose 40 replications all reach `B` is recorded as
+`intractable` for that backend.
+
+Rationale. The cost of one CPU run scales as `n_iter * C * N`. With the frozen
+factorial, the largest cell costs on the order of `1e15` operations, hundreds
+of days on one CPU core. The full Stage A factorial is therefore not
+completable on a CPU, by arithmetic, not by choice of effort. This was known
+in spirit from Caveat 3 but was not made operational in v1.0.
+
+Why this is not a weakening of the design. The infeasible cells are precisely
+the regime the GPU exists to serve. A `budget-exceeded` record is the honest
+CPU datum for those cells and feeds H3 directly. Stage B runs the same cells
+on the GPU. The amendment precedes the registered Stage A run.
