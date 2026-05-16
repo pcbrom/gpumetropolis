@@ -107,8 +107,128 @@ adapter_mcmcpack <- function(spec, data, n_iter, n_chains, seed) {
   )
 }
 
+# nimble. The model is built and compiled to C++ outside the timed region,
+# since protocol section 6.2 excludes compilation from the ESS/s metric. The
+# log-density is compiled, so this backend does not pay R-callback overhead.
+adapter_nimble <- function(spec, data, n_iter, n_chains, seed) {
+  # nimble relies on its package being attached; the namespace-qualified form
+  # alone does not set up its model-building environment.
+  suppressMessages(requireNamespace("nimble", quietly = TRUE))
+  suppressMessages(library(nimble))
+  n_warmup <- n_iter %/% 2L
+  n_keep <- n_iter - n_warmup
+  code <- nimble::nimbleCode({
+    for (i in 1:N) {
+      y[i] ~ dnorm(mu, sd = sigma)
+    }
+    mu ~ dflat()
+  })
+  inits <- lapply(bench_init(data, spec$sigma, n_chains),
+                  function(m) list(mu = m))
+  suppressMessages(invisible(utils::capture.output({
+    model <- nimble::nimbleModel(
+      code, constants = list(N = length(data), sigma = spec$sigma),
+      data = list(y = data), inits = inits[[1]]
+    )
+    cmodel <- nimble::compileNimble(model)
+    conf <- nimble::configureMCMC(model, monitors = "mu")
+    mcmc <- nimble::buildMCMC(conf)
+    cmcmc <- nimble::compileNimble(mcmc, project = model)
+  })))
+  samples <- NULL
+  elapsed <- bench_elapsed(suppressMessages(invisible(utils::capture.output(
+    samples <- nimble::runMCMC(
+      cmcmc, niter = n_iter, nburnin = n_warmup, nchains = n_chains,
+      inits = inits, setSeed = seed + seq_len(n_chains), progressBar = FALSE
+    )
+  ))))
+  draws <- matrix(0, n_keep, n_chains)
+  if (n_chains == 1L) {
+    draws[, 1L] <- as.numeric(samples[, "mu"])
+  } else {
+    for (ch in seq_len(n_chains)) {
+      draws[, ch] <- as.numeric(samples[[ch]][, "mu"])
+    }
+  }
+  list(
+    draws = draws,
+    time_sec = elapsed,
+    meta = list(backend = "nimble",
+                version = as.character(utils::packageVersion("nimble")))
+  )
+}
+
+# BayesianTools, basic Metropolis sampler. One chain per call; chains are
+# looped. A flat prior is approximated by a uniform prior on a wide box.
+adapter_bayesiantools <- function(spec, data, n_iter, n_chains, seed) {
+  n_warmup <- n_iter %/% 2L
+  n_keep <- n_iter - n_warmup
+  ll <- function(par) spec$log_post(par, data)
+  centre <- mean(data)
+  setup <- BayesianTools::createBayesianSetup(
+    likelihood = ll,
+    lower = centre - 10 * spec$sigma,
+    upper = centre + 10 * spec$sigma,
+    names = "mu"
+  )
+  draws <- matrix(0, n_keep, n_chains)
+  elapsed <- bench_elapsed({
+    for (ch in seq_len(n_chains)) {
+      set.seed(seed + ch)
+      out <- BayesianTools::runMCMC(
+        setup, sampler = "Metropolis",
+        settings = list(iterations = n_iter, message = FALSE,
+                        consoleUpdates = 0)
+      )
+      s <- as.numeric(BayesianTools::getSample(out, start = n_warmup + 1L))
+      draws[, ch] <- s[seq_len(n_keep)]
+    }
+  })
+  list(
+    draws = draws,
+    time_sec = elapsed,
+    meta = list(backend = "BayesianTools",
+                version = as.character(utils::packageVersion("BayesianTools")))
+  )
+}
+
+# Stan through cmdstanr. The model is compiled once and cached by cmdstanr;
+# compilation is outside the timed region. Stan uses NUTS, a different
+# algorithm; the ESS/s metric is algorithm-neutral. Chains run sequentially
+# (parallel_chains = 1) so the timing stays single-threaded.
+adapter_stan <- function(spec, data, n_iter, n_chains, seed) {
+  n_warmup <- n_iter %/% 2L
+  n_keep <- n_iter - n_warmup
+  mod <- cmdstanr::cmdstan_model("benchmark/models/m1.stan")
+  inits <- lapply(bench_init(data, spec$sigma, n_chains),
+                  function(m) list(mu = m))
+  standata <- list(N = length(data), y = data, sigma = spec$sigma)
+  fit <- NULL
+  elapsed <- bench_elapsed(
+    fit <- mod$sample(
+      data = standata, chains = n_chains, parallel_chains = 1L,
+      iter_warmup = n_warmup, iter_sampling = n_keep, init = inits,
+      seed = seed, refresh = 0L, show_messages = FALSE,
+      show_exceptions = FALSE
+    )
+  )
+  draws <- matrix(as.numeric(fit$draws("mu")), nrow = n_keep, ncol = n_chains)
+  ndiv <- tryCatch(sum(fit$diagnostic_summary()$num_divergent),
+                   error = function(e) NA_real_)
+  list(
+    draws = draws,
+    time_sec = elapsed,
+    meta = list(backend = "Stan-cmdstanr",
+                version = as.character(utils::packageVersion("cmdstanr")),
+                divergences = ndiv)
+  )
+}
+
 cpu_adapters <- list(
   "gpumetropolis-CPU" = adapter_gpumetropolis_cpu,
   "mcmc" = adapter_mcmc,
-  "MCMCpack" = adapter_mcmcpack
+  "MCMCpack" = adapter_mcmcpack,
+  "nimble" = adapter_nimble,
+  "BayesianTools" = adapter_bayesiantools,
+  "Stan-cmdstanr" = adapter_stan
 )

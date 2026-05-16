@@ -14,3 +14,6 @@ BRIEFING.md
 .RData
 .Rapp.history
 benchmark/results/
+benchmark/models/m1
+benchmark/models/*.hpp
+benchmark/models/*.o
