@@ -10,22 +10,25 @@
 <!-- badges: start -->
 <!-- badges: end -->
 
-A Metropolis-Hastings sampler for Markov chain Monte Carlo whose log-density
-evaluation kernel is written to be portable across GPU vendors and CPU back
-ends from a single source. The sampler advances many independent chains in one
-batched pass, evaluating the candidate states of all chains with a single
-kernel call. It occupies a niche that is currently empty on CRAN: no CRAN
+A generic Metropolis-Hastings sampler for Markov chain Monte Carlo. The user
+declares a model by writing its log-likelihood and log-prior as ordinary R
+formulas; the package compiles them to a portable kernel that runs on the CPU
+and the GPU from one source. The sampler advances many independent chains in
+one batched pass. It occupies a niche that is currently empty on CRAN: no CRAN
 package offers generic MCMC with a vendor-agnostic GPU-portable kernel.
 
-The package is under active development. This version ships the CPU reference
-sampler and the distributional equivalence harness against which the GPU
-kernel is validated. See `## Project status` below.
+The model expression is compiled to a stack-machine bytecode that a single
+CubeCL kernel interprets, so any model in the supported operation set runs on
+the CPU and GPU with no runtime code generation. CubeCL compiles that one
+kernel for CUDA, ROCm, Vulkan and CPU back ends.
+
+The package is under active development. See `## Project status` below.
 
 ## Installation
 
 The package is not on CRAN yet. The development version requires a Rust
-toolchain (`cargo`, `rustc >= 1.65`); see <https://rustup.rs>. Install from
-GitHub with:
+toolchain (`cargo`, `rustc >= 1.85`); see <https://rustup.rs>. The CUDA backend
+additionally needs the CUDA toolkit. Install from GitHub with:
 
 ``` r
 # install.packages("remotes")
@@ -40,36 +43,48 @@ library(gpumetropolis)
 
 ## Quick start
 
-The reference model samples the posterior of the mean of normally distributed
-observations with a known standard deviation and a flat prior. The posterior
-is available in closed form, which makes it a clean target for checking that
-the sampler recovers known parameters.
+A model is declared by writing its per-observation log-likelihood as a
+one-sided formula in the parameter and data names. The example below is the
+Gaussian mean with known standard deviation 2 and a flat prior; its posterior
+is available in closed form, which makes it a clean check that the sampler
+recovers known parameters.
 
 ``` r
 set.seed(1)
-x <- rnorm(50000, mean = 4.2, sd = 1.7)
+y <- rnorm(20000, mean = 3.4, sd = 2)
 
-fit <- metropolis_gaussian_mean(x, sigma = 1.7, n_iter = 6000, n_chains = 8)
+model <- gpum_model(
+  loglik = ~ -((y - mu)^2) / 8,   # sigma = 2, so 0.5 / sigma^2 = 1 / 8
+  params = "mu",
+  data = "y"
+)
+
+fit <- gpu_metropolis(model, data = list(y = y), proposal_sd = 0.05,
+                      n_iter = 3000, n_chains = 8, backend = "cpu")
 fit
 
-# compare against the analytic posterior
-gaussian_mean_posterior(x, sigma = 1.7)
+# the same declaration runs on the GPU
+fit_gpu <- gpu_metropolis(model, data = list(y = y), proposal_sd = 0.05,
+                          n_iter = 3000, n_chains = 8, backend = "cuda")
 ```
+
+The supported operations in a formula are `+`, `-`, `*`, `/`, `^`, unary `-`,
+and `exp`, `log`, `sqrt`. A symbol that is not a declared parameter or data
+column, or a function outside this set, is rejected at compile time with a
+clear error.
 
 ## Convergence diagnostics
 
-The package ships the equivalence harness that later GPU versions are checked
-against. Equivalence for MCMC is distributional, never bit-exact, because the
-algorithm is stochastic.
+The package ships a distributional equivalence harness. Equivalence for MCMC is
+distributional, never bit-exact, because the algorithm is stochastic.
 
 ``` r
-rhat(fit)            # split potential scale reduction factor
-ess(fit)             # effective sample size, Geyer estimator
+draws <- fit$draws[, , "mu"]   # iterations by chains
+rhat(draws)                    # split potential scale reduction factor
+ess(draws)                     # effective sample size, Geyer estimator
 
-# distributional equivalence between two runs
-a <- metropolis_gaussian_mean(x, sigma = 1.7, n_iter = 6000, seed = 1)
-b <- metropolis_gaussian_mean(x, sigma = 1.7, n_iter = 6000, seed = 2)
-ks_equivalence(a, b)
+# distributional equivalence between the CPU and GPU runs
+ks_equivalence(fit$draws[, , "mu"], fit_gpu$draws[, , "mu"])
 ```
 
 `ks_equivalence` thins the pooled draws down to the effective sample size
@@ -92,12 +107,14 @@ unconditional speedups.
 The development follows a phased plan.
 
 - Phase 0, complete: CPU reference sampler in Rust, batched over chains, plus
-  the distributional equivalence harness. `R CMD check --as-cran` passes with
-  no error and no package warning.
-- Phase 1, next: the log-density kernel rewritten in CubeCL, dispatched to the
-  GPU, validated for distributional equivalence against the CPU sampler.
-- Phase 2: multi-vendor portability across NVIDIA and AMD.
-- Phase 3: CRAN submission.
+  the distributional equivalence harness.
+- Phase 1, complete: the generic model DSL, the CubeCL bytecode interpreter
+  kernel, and the `gpum_model()` / `gpu_metropolis()` API. A model declared by
+  formula runs on the CPU and CUDA backends from one source and recovers known
+  posteriors; `R CMD check --as-cran` passes with no error.
+- Phase 2, next: multi-vendor portability, the AMD GPU through the Vulkan back
+  end, and the registered benchmark experiment.
+- Phase 3: CRAN submission, including vendoring the Rust dependency tree.
 
 ## Benchmark
 
@@ -112,12 +129,8 @@ committed before any result existed.
 The primary metric is effective sample size per second, computed uniformly
 with `coda` so the estimator is not a confounder. A correctness gate precedes
 any speed comparison: the speed of an incorrect sampler is not reported.
-
-Execution is in two stages. The CPU stage is in progress; the GPU stage
-follows Phase 1. Measured results are added to this section once the
-registered run completes. Pilot runs so far have validated the harness and the
-correctness gate; they are pipeline checks, not the registered experiment, and
-their numbers are not reported here as results.
+Measured results are added to this section once the registered run completes
+on the generic package.
 
 The machine and software environment of the benchmark host is recorded in
 [`benchmark/ENVIRONMENT.md`](https://github.com/pcbrom/gpumetropolis/blob/main/benchmark/ENVIRONMENT.md),

@@ -144,6 +144,14 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
   np <- model$n_params
   if (is.null(init)) {
     n_chains <- as.integer(n_chains)
+    # Derive the starting values deterministically from `seed`, so the whole
+    # run is reproducible from `seed` alone, without disturbing the caller's
+    # random number stream.
+    if (exists(".Random.seed", envir = .GlobalEnv)) {
+      old_seed <- get(".Random.seed", envir = .GlobalEnv)
+      on.exit(assign(".Random.seed", old_seed, envir = .GlobalEnv), add = TRUE)
+    }
+    set.seed(as.integer(seed))
     init_mat <- matrix(stats::rnorm(n_chains * np), nrow = n_chains, ncol = np)
   } else {
     init_mat <- as.matrix(init)
