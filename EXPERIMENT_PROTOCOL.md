@@ -1,0 +1,198 @@
+# Experiment protocol: characterising the advantage regime of gpumetropolis
+
+Version 1.0. Status: FROZEN. Pre-registered and approved by the author before
+any cell of the experiment is executed. Freeze date: 2026-05-16.
+
+Pre-registration in the strict sense: this document fixes the hypotheses,
+design, metrics and decision rules before any result exists. The dated commit
+that freezes it is the verifiable timestamp. No cell of the experiment is run
+before the freeze.
+
+## 1. Objective
+
+Characterise, in a refutable way, the regime in which gpumetropolis beats,
+ties, or loses to the established MCMC packages of the R ecosystem, along the
+axes of speed, sampling stability and numerical stability. The objective is not
+to demonstrate superiority; it is to map the advantage frontier with hypotheses
+that are allowed to fail.
+
+## 2. Binding caveats (inherited from the canonical plan)
+
+These caveats constrain what the experiment may claim. Contradicting them
+requires an explicit instruction from the author.
+
+1. MCMC has an intrinsic sequential dependence; the time axis within a single
+   chain does not parallelise.
+2. The parallelism exploited comes from two axes: many independent chains, and
+   the data-parallel evaluation of the log-density.
+3. A GPU does not accelerate every MCMC. It pays off only for an expensive
+   log-density (large N) or for many chains. For a small model with few chains
+   the transfer overhead dominates and the GPU loses.
+4. Low-level languages tie on peak performance. Rust's gain is not raw speed;
+   no speedup is attributed to the choice of language.
+5. MCMC equivalence is distributional, never a numerical epsilon. MCMC is
+   stochastic; bit-exact reproducibility between CPU and GPU is not expected.
+
+## 3. Pre-registered hypotheses
+
+Each hypothesis carries a quantitative prediction, a support condition and a
+refutation condition. Hypotheses H3 and H4 depend on the Phase 1 GPU kernel and
+are tested only in the second execution stage (section 9).
+
+| ID | Prediction | Supported when | Refuted when |
+|---|---|---|---|
+| H1 correctness | gpumetropolis and every competitor sample the same target posterior | the two-sample KS test against the reference truth does not reject at `alpha = 0.01` after thinning, and R-hat `< 1.01`, in every valid cell | failure in any cell signals a defect; it is fixed before any speed is measured |
+| H2 CPU parity | in the CPU regime, gpumetropolis-CPU does not dominate the competitors; the ratio of median ESS/s between gpumetropolis-CPU and the best competitor stays in `[0.5, 2]` for N up to `1e4` | the median ratio lies in `[0.5, 2]` with a bootstrap CI contained in `[0.33, 3]` | ratio `< 0.5` signals an inefficiency to fix; ratio `> 2` requires a harness audit, since it contradicts Caveat 4 |
+| H3 GPU advantage regime | there exists an `N*` such that, for `N > N*`, the GPU backend of gpumetropolis beats the best CPU backend in ESS/s by a factor `>= 2`; the prediction places `N*` in the order `1e4` to `1e5` | some tested `N` up to `1e7` shows a median ratio `>= 2` with the lower CI bound `> 1` | no `N` up to `1e7` shows a median ratio `>= 2`: the value proposition fails and the scope is reassessed |
+| H4 portability | the kernel passes distributional equivalence on NVIDIA and on AMD | the KS test does not reject at `alpha = 0.01` and R-hat `< 1.01` on both vendors | failure on any vendor beyond the development one |
+| H5 numerical stability | for the Gaussian model with `N = 1e7`, the relative error of the log-density evaluated by the tree reduction grows as `O(log N)` in `epsilon`, against `O(N)` for the naive sequential sum | the tree-reduction error is smaller than the naive-sum error by `>= 1` order of magnitude, both measured against an extended-precision reference | the tree-reduction error is no better than the naive-sum error |
+| H6 sampling stability | the failure rate of gpumetropolis (NaN, non-finite, R-hat `> 1.1`, divergence) is less than or equal to that of the median competitor across all cells | the failure rate is at or below the competitor median | the failure rate is above the competitor median |
+
+H5 carries a recorded caveat from the outset: a well-implemented CPU sum
+(pairwise, or compensated Kahan) reaches the same `O(log N)` bound or better.
+The H5 comparison is between tree reduction and naive sum; the report also
+states the tie against a well-implemented CPU sum. The CPU is not handicapped
+to inflate the GPU advantage.
+
+## 4. Factorial design
+
+Crossed factorial design over the factors below. Each combination is a cell;
+each cell receives the number of replications of section 7.
+
+| Factor | Levels | Axis |
+|---|---|---|
+| N, data set size | `1e2, 1e3, 1e4, 1e5, 1e6, 1e7` | log-density cost (Caveat 3) |
+| C, number of chains | `1, 8, 64, 512, 4096, 32768` | chain parallelism (Caveat 2) |
+| backend | gpumetropolis-CPU; gpumetropolis-CUDA; gpumetropolis-Vulkan-NVIDIA; gpumetropolis-Vulkan-AMD; MCMCpack; mcmc; nimble; BayesianTools; greta; Stan via cmdstanr | implementation |
+| target model | M1 to M4 (section 5) | target geometry |
+
+Invalid cells are excluded and the exclusion is recorded: competitors without
+native support for thousands of chains run up to the largest C they support
+idiomatically; GPU backends exist only from Phase 1.
+
+## 5. Target models
+
+| ID | Model | Reference truth | Note |
+|---|---|---|---|
+| M1 | Gaussian mean, known `sigma`, flat prior | closed-form posterior `Normal(mean(data), sigma^2 / N)` | exact truth; already implemented |
+| M2 | bimodal target (mixture of two separated Gaussians, or a bimodal Gumbel) | high-resolution numerical quadrature | tests mode crossing |
+| M3 | heavy-tailed target (Student t with few degrees of freedom) | quadrature or a long reference sample | tests tail stability |
+| M4 | high-curvature target (ill-conditioned Gaussian of moderate dimension) | closed-form when Gaussian | tests geometric robustness |
+
+Execution order: M1 first, since it has an exact truth. M2 to M4 enter as the
+harness matures.
+
+Recorded scope boundary: the parameter dimension is kept low to moderate (1 to
+about 10). The experiment claims nothing about high-dimensional targets.
+Random-walk Metropolis scales poorly with dimension; this is known and is not
+the package's claim. See section 11.
+
+## 6. Response metrics
+
+### 6.1 Correctness gate (precedes any speed comparison)
+
+A cell enters the speed analysis only after passing the H1 gate. The speed of
+an incorrect sampler is not measured.
+
+### 6.2 Primary efficiency metric
+
+Effective Sample Size per second (ESS/s). ESS is computed uniformly for every
+sampler with `coda::effectiveSize`, to remove the estimator as a confounder.
+Time is the wall-clock of the sampling call, excluding setup and compilation.
+The compilation time of nimble and Stan is reported separately as a one-time
+cost.
+
+### 6.3 Sampling stability
+
+Distribution of R-hat across replications; variance of ESS; failure rate (NaN,
+non-finite values, R-hat `> 1.1`, reported divergences); agreement under the
+same seed on the same device.
+
+### 6.4 Numerical stability
+
+For M1 with large `N`: relative error of the posterior mean and variance
+estimators against the closed-form truth; and relative error of the log-density
+evaluation by the tree reduction and by the naive sum, both against an
+extended-precision reference. The extended-precision reference is computed with
+a correctly-rounded summation (Python `math.fsum`, or `mpmath` for the full
+quantity).
+
+## 7. Measurement protocol
+
+- Replications per cell: 40, with distinct seeds.
+- Seed scheme: `seed = 10000 * cell_id + replication_index`, fixed in advance;
+  the `cell_id` map is generated and frozen together with this document, in
+  `benchmark/cell_map.csv`.
+- Discard: warmup of half the iterations, following the package default;
+  identical for every sampler.
+- Iterations: tuned per model so the reference sampler reaches ESS `>= 400` per
+  chain in the base regime; the same iteration budget is given to every
+  competitor.
+- Threads: the primary comparison runs single-threaded, to isolate the
+  algorithm. A multi-thread variant is a secondary analysis, only where the
+  package supports it.
+- Hardware warmup: three discarded runs before each cell.
+- Environment: versions of R, the Rust compiler, the packages, the GPU driver,
+  the system kernel and the CPU frequency governor are recorded on each run.
+- CPU baseline machine: AMD Ryzen 9 9900X3D, 24 threads. GPU backend machine:
+  NVIDIA RTX 4090 and an AMD GPU on the same host.
+
+## 8. Statistical analysis
+
+Per cell, the median ESS/s and its 95 percent bootstrap confidence interval
+over the 40 replications are reported. The H2 and H3 comparisons use the ratio
+of medians between gpumetropolis and the reference competitor, with a bootstrap
+CI. The decision rules of section 3 are applied to those CIs, not to point
+estimates. No decision rests on a difference of means without a CI.
+
+## 9. Two-stage execution plan
+
+- Stage A, now: CPU backend. Cells of gpumetropolis-CPU against MCMCpack, mcmc,
+  nimble, BayesianTools, greta and Stan via cmdstanr, on model M1, then M2 to
+  M4. Tests H1, H2, H5 and H6 on the CPU slice. Sets the honest baseline.
+- Stage B, after Phase 1: GPU backends (CUDA, Vulkan-NVIDIA, Vulkan-AMD). Tests
+  H3 and H4 and completes H5 and H6 on the GPU slice.
+
+## 10. Decision criteria for CRAN publication
+
+CRAN publication is blocked only by the failure of H1, that is, by
+incorrectness. The failure of H3, the absence of a GPU advantage regime, does
+not block publication; it forces a repositioning of the package's public
+claims, and the final decision rests with the author. The package may go to
+CRAN as a correct artefact occupying the empty niche even without a speed
+dominance. The experiment characterises; it is not a dominance gatekeeper.
+
+## 11. Threats to validity
+
+- Distinct algorithms: the competitors use HMC, NUTS, DE-MCMC or Metropolis;
+  comparing by ESS/s is algorithm-neutral, but the interpretation records that
+  different samplers have different per-iteration costs.
+- Low dimension favours random-walk Metropolis; the experiment does not
+  generalise to high dimension and the report says so.
+- Implementation maturity: the competitors have years of tuning; a
+  gpumetropolis disadvantage may be one of implementation, not of algorithm.
+- CPU-GPU transfer overhead varies with driver and bus; it is measured and
+  reported, not assumed.
+- ESS estimation is itself noisy; it is made uniform with `coda` and smoothed
+  by the 40 replications.
+
+## 12. What the experiment will not claim
+
+- That gpumetropolis is the fastest MCMC. The defensible claim is conditional
+  on the regime.
+- That there is incontestable numerical stability. Numerical stability is
+  reported as measured error against a high-precision reference, with
+  rounding-error bounds cited from Higham (2002).
+- That the gain comes from the Rust language. See Caveat 4.
+- Anything about high-dimensional targets.
+
+## 13. References
+
+- Gelman, A. and Rubin, D. B. (1992). Inference from iterative simulation using
+  multiple sequences. Statistical Science 7(4), 457-472.
+- Geyer, C. J. (1992). Practical Markov chain Monte Carlo. Statistical Science
+  7(4), 473-483.
+- Higham, N. J. (2002). Accuracy and Stability of Numerical Algorithms, 2nd ed.
+  SIAM.
+- Plummer, M. et al. (2006). CODA: Convergence diagnosis and output analysis
+  for MCMC. R News 6(1), 7-11.

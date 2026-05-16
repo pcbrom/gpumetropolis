@@ -7,6 +7,10 @@
 ^LICENSE\.md$
 ^BRIEFING\.md$
 ^\.git$
+^\.github$
 ^cran-comments\.md$
 ^doc$
 ^Meta$
+^EXPERIMENT_PROTOCOL\.md$
+^EXPERIMENT_LOG\.md$
+^benchmark$
