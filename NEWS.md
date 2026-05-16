@@ -1,0 +1,27 @@
+# gpumetropolis (development version)
+
+First development cycle of the package.
+
+## Sampler
+
+- `gpum_model()` declares a model from a log-likelihood and an optional
+  log-prior written as one-sided formulas, in a restricted operation set
+  (`+`, `-`, `*`, `/`, `^`, unary `-`, `exp`, `log`, `sqrt`). The formulas are
+  compiled to a stack-machine bytecode.
+- `gpu_metropolis()` runs a batched random-walk Metropolis sampler over the
+  compiled model. One kernel source runs on three backends: `cpu`, `cuda` and
+  `vulkan`. `backend = "auto"` selects the CPU for few chains and CUDA for
+  many.
+- The GPU kernel assigns one block of threads to each chain; the threads of a
+  block share the sum over observations through a tree reduction. The CPU
+  backend is native Rust, with the log-likelihood JIT-compiled to machine code
+  and worked in double precision.
+
+## Diagnostics
+
+- `rhat()`, the split potential scale reduction factor.
+- `ess()`, the effective sample size by Geyer's initial positive sequence.
+- `ks_equivalence()`, a two-sample Kolmogorov-Smirnov check of distributional
+  equivalence, thinned to the effective sample size.
+- `gaussian_mean_posterior()`, the closed-form posterior used to check
+  parameter recovery.

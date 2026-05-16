@@ -2,7 +2,9 @@ Package: gpumetropolis
 Title: GPU-Portable Vendor-Agnostic Metropolis-Hastings Sampler
 Version: 0.0.0.9000
 Authors@R:
-    person("Pedro", "Carvalho Brom", , "pcbrom@gmail.com", role = c("aut", "cre"))
+    person("Pedro", "Carvalho Brom", , "pcbrom@gmail.com",
+           role = c("aut", "cre", "cph"),
+           comment = c(ORCID = "0000-0002-1288-7695"))
 Description: A generic random-walk Metropolis-Hastings sampler for Markov
     chain Monte Carlo. The user declares a model by writing its log-likelihood
     and log-prior as one-sided formulas; the package compiles them to a
