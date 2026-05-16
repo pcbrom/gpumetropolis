@@ -1,5 +1,6 @@
 use extendr_api::prelude::*;
 
+mod gpu;
 mod model;
 mod sampler;
 
@@ -43,6 +44,26 @@ fn rust_metropolis_gaussian_mean(
     list!(draws = mat, accept_rate = res.accept_rate)
 }
 
+/// Evaluate the batched Gaussian-mean log-density through the CubeCL kernel.
+///
+/// Internal helper. `backend` selects the compute runtime: "cpu" or "cuda".
+/// Used to check that the CubeCL path is wired into the package build.
+/// @noRd
+#[extendr]
+fn rust_gaussian_logdens_gpu(
+    candidates: Vec<f64>,
+    data: Vec<f64>,
+    sigma: f64,
+    backend: &str,
+) -> Vec<f64> {
+    let cand: Vec<f32> = candidates.iter().map(|&v| v as f32).collect();
+    let dat: Vec<f32> = data.iter().map(|&v| v as f32).collect();
+    gpu::gaussian_logdens(&cand, &dat, sigma as f32, gpu::Backend::from_name(backend))
+        .into_iter()
+        .map(|v| v as f64)
+        .collect()
+}
+
 // Macro to generate exports.
 // This ensures exported functions are registered with R.
 // See corresponding C code in `entrypoint.c`.
@@ -50,4 +71,5 @@ extendr_module! {
     mod gpumetropolis;
     fn rust_log_density_batch;
     fn rust_metropolis_gaussian_mean;
+    fn rust_gaussian_logdens_gpu;
 }

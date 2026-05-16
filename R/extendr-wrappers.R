@@ -21,4 +21,11 @@ rust_log_density_batch <- function(candidates, data, sigma) .Call(wrap__rust_log
 #' @noRd
 rust_metropolis_gaussian_mean <- function(data, sigma, n_iter, init, proposal_sd, seed) .Call(wrap__rust_metropolis_gaussian_mean, data, sigma, n_iter, init, proposal_sd, seed)
 
+#' Evaluate the batched Gaussian-mean log-density through the CubeCL kernel.
+#'
+#' Internal helper. `backend` selects the compute runtime: "cpu" or "cuda".
+#' Used to check that the CubeCL path is wired into the package build.
+#' @noRd
+rust_gaussian_logdens_gpu <- function(candidates, data, sigma, backend) .Call(wrap__rust_gaussian_logdens_gpu, candidates, data, sigma, backend)
+
 # nolint end
