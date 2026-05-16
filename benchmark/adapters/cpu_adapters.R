@@ -30,27 +30,35 @@ bench_init <- function(data, sigma, n_chains) {
   }
 }
 
-# gpumetropolis CPU reference sampler. The log-density runs in compiled Rust
-# with no per-iteration R callback.
-adapter_gpumetropolis_cpu <- function(spec, data, n_iter, n_chains, seed) {
-  n_warmup <- n_iter %/% 2L
-  fit <- NULL
-  elapsed <- bench_elapsed(
-    fit <- gpumetropolis::metropolis_gaussian_mean(
-      data = data, sigma = spec$sigma, n_iter = n_iter,
-      n_chains = n_chains, seed = seed
+# gpumetropolis through the generic API. The model is declared in the DSL and
+# the sampler runs on the chosen backend (cpu, cuda or vulkan). The same
+# declaration drives every backend; only `backend` changes.
+make_gpumetropolis_adapter <- function(be) {
+  force(be)
+  function(spec, data, n_iter, n_chains, seed) {
+    n_warmup <- n_iter %/% 2L
+    model <- gpumetropolis::gpum_model(spec$gpum_loglik, params = "mu",
+                                       data = "y")
+    init <- matrix(bench_init(data, spec$sigma, n_chains), ncol = 1L)
+    psd <- 2.4 * spec$sigma / sqrt(length(data))
+    fit <- NULL
+    elapsed <- bench_elapsed(
+      fit <- gpumetropolis::gpu_metropolis(
+        model, data = list(y = data), init = init, proposal_sd = psd,
+        n_iter = n_iter, seed = seed, backend = be
+      )
     )
-  )
-  draws <- fit$draws[seq.int(n_warmup + 1L, n_iter), , drop = FALSE]
-  list(
-    draws = draws,
-    time_sec = elapsed,
-    meta = list(
-      backend = "gpumetropolis-CPU",
-      version = as.character(utils::packageVersion("gpumetropolis")),
-      accept_rate = mean(fit$accept_rate)
+    draws <- fit$draws[seq.int(n_warmup + 1L, n_iter), , 1L, drop = FALSE]
+    dim(draws) <- c(n_iter - n_warmup, n_chains)
+    list(
+      draws = draws,
+      time_sec = elapsed,
+      meta = list(
+        backend = paste0("gpumetropolis-", be),
+        version = as.character(utils::packageVersion("gpumetropolis"))
+      )
     )
-  )
+  }
 }
 
 # mcmc::metrop. One chain per call; chains are looped. The log-density is an R
@@ -225,7 +233,9 @@ adapter_stan <- function(spec, data, n_iter, n_chains, seed) {
 }
 
 cpu_adapters <- list(
-  "gpumetropolis-CPU" = adapter_gpumetropolis_cpu,
+  "gpumetropolis-cpu" = make_gpumetropolis_adapter("cpu"),
+  "gpumetropolis-cuda" = make_gpumetropolis_adapter("cuda"),
+  "gpumetropolis-vulkan" = make_gpumetropolis_adapter("vulkan"),
   "mcmc" = adapter_mcmc,
   "MCMCpack" = adapter_mcmcpack,
   "nimble" = adapter_nimble,

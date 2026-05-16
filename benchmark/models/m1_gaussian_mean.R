@@ -35,6 +35,13 @@ m1_spec <- local({
     list(mean = mean(data), sd = sigma / sqrt(length(data)))
   }
 
+  # The same model declared in the gpumetropolis DSL: per-observation
+  # log-likelihood up to a constant, with sigma folded into the divisor
+  # 2 * sigma^2.
+  gpum_loglik <- stats::as.formula(
+    sprintf("~ -((y - mu)^2) / %.10g", 2 * sigma^2)
+  )
+
   list(
     id = "M1",
     true_mu = true_mu,
@@ -42,6 +49,7 @@ m1_spec <- local({
     dim = 1L,
     make_data = make_data,
     log_post = log_post,
-    truth = truth
+    truth = truth,
+    gpum_loglik = gpum_loglik
   )
 })

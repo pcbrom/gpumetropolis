@@ -1,8 +1,8 @@
 # Experiment protocol: characterising the advantage regime of gpumetropolis
 
-Version 0.4. Status: FROZEN. Pre-registered and approved by the author before
+Version 0.6. Status: FROZEN. Pre-registered and approved by the author before
 any cell of the registered experiment is executed. Freeze date of v0.1:
-2026-05-16. Amendments v0.2, v0.3 and v0.4: 2026-05-16. See section 14 for the
+2026-05-16. Amendments v0.2 to v0.6: 2026-05-16. See section 14 for the
 amendment record.
 
 The protocol is versioned on the 0.x line because it is a living
@@ -320,6 +320,53 @@ Why this is not a weakening of the design. The infeasible cells are precisely
 the regime the GPU exists to serve. A `budget-exceeded` record is the honest
 CPU datum for those cells and feeds H3 directly. Stage B runs the same cells
 on the GPU. The amendment precedes the registered Stage A run.
+
+### v0.5, 2026-05-16: first executed run is a reduced subset
+
+Change. The author set a 20 to 30 minute wall-clock ceiling for the first
+executed run. To fit it, the first run is a reduced subset, not the full
+factorial of section 4:
+
+- grid: N in `{1e3, 1e5, 1e7}` and C in `{1, 64, 4096}`, three levels each,
+  spanning the small, medium and large regimes of both axes;
+- model: M1 only;
+- backends: gpumetropolis on cpu, cuda and vulkan, plus mcmc, MCMCpack,
+  nimble, BayesianTools and Stan via cmdstanr (greta excluded as recorded;
+  nimble excluded for N at or above `1e5` as recorded);
+- replications: 10 per cell;
+- per-run budget B: 20 s; global watchdog: 27 minutes.
+
+Status of the full design. The full factorial of section 4, with 40
+replications, remains the registered target. It is run later, without a tight
+ceiling. The reduced run is labelled as such in every report.
+
+Effect on the analysis. Ten replications on a three-by-three grid give wider
+bootstrap confidence intervals and a coarser map of the advantage frontier
+than the full design. The hypotheses and their decision rules are unchanged;
+the verdicts from the reduced run are reported with that lower resolution
+stated explicitly. The reduction is a loss of precision, not a change of the
+questions. The amendment precedes the executed run.
+
+### v0.6, 2026-05-16: one process per cell
+
+Change. The execution unit becomes the cell, not the single run. One process
+runs all ten replications of a cell. The per-run budget B is replaced by a
+per-cell wall-clock cap (120 s); the global watchdog is unchanged.
+
+Rationale. A first attempt with one process per replication showed every GPU
+backend at zero completed cells: each fresh process pays CUDA or wgpu
+initialisation and the CubeCL kernel JIT compilation, and that fixed cost
+alone exceeds a 20 s per-run budget. That is a harness artefact, not a property
+of the sampler. Batching the replications into one process, with a discarded
+warmup call that absorbs the initialisation and the JIT, lets the timed
+replications measure sampling only.
+
+Effect on the metric. The metric is unchanged: `time_sec` still measures the
+wall-clock of one sampling call, now with initialisation and JIT already paid
+by the warmup. A cell whose process reaches the 120 s cap keeps the
+replications that finished; the rest are recorded as budget-exceeded. The
+amendment precedes the executed run; the earlier one-process-per-replication
+attempt produced no registered results and is discarded.
 
 ### v0.4, 2026-05-16: 3 hour compute ceiling and 30 GB memory ceiling
 
