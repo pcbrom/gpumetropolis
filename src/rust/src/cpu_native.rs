@@ -1,10 +1,10 @@
 //! Native CPU backend.
 //!
 //! The whole-chain Metropolis sampler in plain Rust, parallel over chains with
-//! rayon. The CubeCL CPU runtime is slow for this interpreter-style kernel; a
-//! native compiled loop with one thread per chain group is far faster. The
-//! RNG, the bytecode VM and the arithmetic mirror `chain_kernel.rs` exactly, so
-//! the CPU backend and the GPU backends sample the same way.
+//! rayon. The log-likelihood is JIT-compiled to native code (see `jit.rs`),
+//! with an interpreter fallback. The CPU path works in f64: the log-density
+//! sums many terms, and f32 loses the small difference that drives the
+//! Metropolis acceptance once the data set is large.
 
 use rayon::prelude::*;
 
@@ -23,17 +23,17 @@ fn triple32(mut h: u32) -> u32 {
 }
 
 #[inline]
-fn rand_uniform(seedmix: u32, ctr: u32) -> f32 {
-    (triple32(seedmix.wrapping_add(ctr)) as f32 + 0.5) / 4294967296.0
+fn rand_uniform(seedmix: u32, ctr: u32) -> f64 {
+    (triple32(seedmix.wrapping_add(ctr)) as f64 + 0.5) / 4294967296.0
 }
 
 /// Run one bytecode program once; an empty program returns zero.
-fn vm_eval(code: &[u32], consts: &[f32], params: &[f32], data: &[f32],
-           data_base: usize) -> f32 {
+fn vm_eval(code: &[u32], consts: &[f64], params: &[f64], data: &[f64],
+           data_base: usize) -> f64 {
     if code.is_empty() {
         return 0.0;
     }
-    let mut stack = [0.0f32; 32];
+    let mut stack = [0.0f64; 32];
     let mut sp = 0usize;
     for pc in 0..(code.len() / 2) {
         let op = code[2 * pc];
@@ -56,46 +56,55 @@ fn vm_eval(code: &[u32], consts: &[f32], params: &[f32], data: &[f32],
     stack[0]
 }
 
-#[allow(clippy::too_many_arguments)]
-fn log_post(code: &[u32], consts: &[f32], prior_code: &[u32],
-            prior_consts: &[f32], params: &[f32], data: &[f32],
-            n_cols: usize, n_obs: usize) -> f32 {
-    let mut acc = 0.0f32;
+/// Interpreted log-likelihood sum over the observations, the fallback path.
+fn interp_loglik(code: &[u32], consts: &[f64], params: &[f64], data: &[f64],
+                 n_cols: usize, n_obs: usize) -> f64 {
+    let mut acc = 0.0f64;
     for obs in 0..n_obs {
         acc += vm_eval(code, consts, params, data, obs * n_cols);
     }
-    acc + vm_eval(prior_code, prior_consts, params, &[], 0)
+    acc
 }
 
 /// Run the whole-chain Metropolis sampler natively, parallel over chains.
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     code: &[u32],
-    consts: &[f32],
+    consts: &[f64],
     prior_code: &[u32],
-    prior_consts: &[f32],
+    prior_consts: &[f64],
     n_params: usize,
-    data: &[f32],
+    data: &[f64],
     n_cols: usize,
     n_obs: usize,
-    init: &[f32],
-    proposal_sd: &[f32],
+    init: &[f64],
+    proposal_sd: &[f64],
     n_iter: usize,
     seed: u32,
 ) -> ChainResult {
     let n_chains = init.len() / n_params;
-    let two_pi = 6.2831853f32;
+    let two_pi = 6.283185307179586f64;
 
-    // Each chain produces its own draws and acceptance rate; assembled after.
+    // Compile the log-likelihood to native code once; on failure use the
+    // interpreter.
+    let jit = crate::jit::compile_loglik(code, consts).ok();
+    let log_post = |params: &[f64]| -> f64 {
+        let data_ll = match &jit {
+            Some(j) => j.eval(params, data, n_obs, n_cols),
+            None => interp_loglik(code, consts, params, data, n_cols, n_obs),
+        };
+        data_ll + vm_eval(prior_code, prior_consts, params, &[], 0)
+    };
+
+    // Each chain produces its own draws (f32) and acceptance rate.
     let per_chain: Vec<(Vec<f32>, f32)> = (0..n_chains)
         .into_par_iter()
         .map(|c| {
             let pbase = c * n_params;
             let seedmix = seed.wrapping_add((c as u32).wrapping_mul(2654435761));
-            let mut state: Vec<f32> = init[pbase..pbase + n_params].to_vec();
+            let mut state: Vec<f64> = init[pbase..pbase + n_params].to_vec();
             let mut prop = state.clone();
-            let mut cur = log_post(code, consts, prior_code, prior_consts,
-                                   &state, data, n_cols, n_obs);
+            let mut cur = log_post(&state);
             let mut ctr = 0u32;
             let mut accepts = 0u32;
             let mut cdraws = vec![0.0f32; n_iter * n_params];
@@ -109,8 +118,7 @@ pub fn run(
                     let z = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
                     prop[j] = state[j] + proposal_sd[j] * z;
                 }
-                let plp = log_post(code, consts, prior_code, prior_consts,
-                                   &prop, data, n_cols, n_obs);
+                let plp = log_post(&prop);
                 ctr += 1;
                 let u = rand_uniform(seedmix, ctr);
                 if u.ln() < plp - cur {
@@ -119,7 +127,7 @@ pub fn run(
                     accepts += 1;
                 }
                 for j in 0..n_params {
-                    cdraws[t * n_params + j] = state[j];
+                    cdraws[t * n_params + j] = state[j] as f32;
                 }
             }
             let rate = if n_iter == 0 {

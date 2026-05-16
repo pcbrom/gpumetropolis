@@ -332,37 +332,47 @@ fn run_block<R: Runtime>(
     }
 }
 
-/// Run the whole-chain Metropolis sampler on the chosen backend. The CPU
-/// backend uses a native Rust implementation; the GPU backends use the
-/// block-per-chain kernel.
+/// Run the whole-chain Metropolis sampler on the chosen backend. The float
+/// inputs are f64; the CPU backend keeps f64 throughout, the GPU backends cast
+/// to f32 for the device kernel.
 #[allow(clippy::too_many_arguments)]
 pub fn gpu_metropolis_chain(
     code: &[u32],
-    consts: &[f32],
+    consts: &[f64],
     prior_code: &[u32],
-    prior_consts: &[f32],
+    prior_consts: &[f64],
     n_params: usize,
-    data: &[f32],
+    data: &[f64],
     n_cols: usize,
     n_obs: usize,
-    init: &[f32],
-    proposal_sd: &[f32],
+    init: &[f64],
+    proposal_sd: &[f64],
     n_iter: usize,
     seed: u32,
     backend: crate::gpu::Backend,
 ) -> ChainResult {
+    // The CPU backend uses a native Rust implementation in f64; the CubeCL CPU
+    // runtime is slow for this interpreter-style kernel.
+    if backend == crate::gpu::Backend::Cpu {
+        return crate::cpu_native::run(
+            code, consts, prior_code, prior_consts, n_params, data, n_cols,
+            n_obs, init, proposal_sd, n_iter, seed,
+        );
+    }
+    // GPU backends: cast the float inputs to f32 for the device kernel.
+    let f32v = |s: &[f64]| -> Vec<f32> { s.iter().map(|&v| v as f32).collect() };
+    let (c, pc, d, i, p) = (
+        f32v(consts), f32v(prior_consts), f32v(data), f32v(init),
+        f32v(proposal_sd),
+    );
     match backend {
-        crate::gpu::Backend::Cpu => crate::cpu_native::run(
-            code, consts, prior_code, prior_consts, n_params, data, n_cols,
-            n_obs, init, proposal_sd, n_iter, seed,
-        ),
         crate::gpu::Backend::Cuda => run_block::<cubecl::cuda::CudaRuntime>(
-            code, consts, prior_code, prior_consts, n_params, data, n_cols,
-            n_obs, init, proposal_sd, n_iter, seed,
+            code, &c, prior_code, &pc, n_params, &d, n_cols, n_obs, &i, &p,
+            n_iter, seed,
         ),
-        crate::gpu::Backend::Vulkan => run_block::<cubecl::wgpu::WgpuRuntime>(
-            code, consts, prior_code, prior_consts, n_params, data, n_cols,
-            n_obs, init, proposal_sd, n_iter, seed,
+        _ => run_block::<cubecl::wgpu::WgpuRuntime>(
+            code, &c, prior_code, &pc, n_params, &d, n_cols, n_obs, &i, &p,
+            n_iter, seed,
         ),
     }
 }

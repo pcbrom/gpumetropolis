@@ -4,6 +4,7 @@ mod chain_kernel;
 mod cpu_native;
 mod gpu;
 mod interp;
+mod jit;
 mod model;
 mod sampler;
 
@@ -126,24 +127,19 @@ fn rust_gpu_metropolis(
     backend: &str,
 ) -> List {
     let ll_code: Vec<u32> = loglik_code.iter().map(|&v| v as u32).collect();
-    let ll_consts: Vec<f32> = loglik_consts.iter().map(|&v| v as f32).collect();
-    let data_f: Vec<f32> = data.iter().map(|&v| v as f32).collect();
     let pr_code: Vec<u32> = prior_code.iter().map(|&v| v as u32).collect();
-    let pr_consts: Vec<f32> = prior_consts.iter().map(|&v| v as f32).collect();
-    let init_f: Vec<f32> = init.iter().map(|&v| v as f32).collect();
-    let psd_f: Vec<f32> = proposal_sd.iter().map(|&v| v as f32).collect();
 
     let res = chain_kernel::gpu_metropolis_chain(
         &ll_code,
-        &ll_consts,
+        &loglik_consts,
         &pr_code,
-        &pr_consts,
+        &prior_consts,
         n_params as usize,
-        &data_f,
+        &data,
         n_cols as usize,
         n_obs as usize,
-        &init_f,
-        &psd_f,
+        &init,
+        &proposal_sd,
         n_iter as usize,
         seed as u32,
         gpu::Backend::from_name(backend),
