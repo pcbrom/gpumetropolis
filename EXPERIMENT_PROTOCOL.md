@@ -164,7 +164,10 @@ quantity).
   package supports it.
 - Hardware warmup: three discarded runs before each cell.
 - Environment: versions of R, the Rust compiler, the packages, the GPU driver,
-  the system kernel and the CPU frequency governor are recorded on each run.
+  the system kernel and the CPU frequency governor are recorded. The full host
+  snapshot, machine and software, is captured in `benchmark/ENVIRONMENT.md` by
+  the re-runnable script `benchmark/capture_env.sh`, so a third party can
+  reproduce or audit the run.
 - CPU baseline machine: AMD Ryzen 9 9900X3D, 24 threads. GPU backend machine:
   NVIDIA RTX 4090 and an AMD GPU on the same host.
 
