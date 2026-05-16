@@ -33,8 +33,14 @@ res <- tryCatch({
   out <- cpu_adapters[[backend]](m1_spec, data, n_iter, C, seed)
   gate <- h1_gate(out$draws, truth)
   ess <- total_ess(out$draws)
-  list(time_sec = out$time_sec, total_ess = ess,
-       ess_per_sec = ess / out$time_sec, rhat = gate$rhat,
+  tsec <- out$time_sec
+  # Reclaim the sampler allocations before this process exits. The hard memory
+  # guarantee is the per-job ulimit and process isolation; this just keeps the
+  # peak of a single worker lower.
+  rm(out)
+  invisible(gc(verbose = FALSE))
+  list(time_sec = tsec, total_ess = ess,
+       ess_per_sec = ess / tsec, rhat = gate$rhat,
        ks_stat = gate$ks_stat, ks_pvalue = gate$ks_pvalue,
        outcome = "completed", error = NA_character_)
 }, error = function(e) {

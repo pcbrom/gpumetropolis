@@ -1,8 +1,8 @@
 # Experiment protocol: characterising the advantage regime of gpumetropolis
 
-Version 0.3. Status: FROZEN. Pre-registered and approved by the author before
+Version 0.4. Status: FROZEN. Pre-registered and approved by the author before
 any cell of the registered experiment is executed. Freeze date of v0.1:
-2026-05-16. Amendments v0.2 and v0.3: 2026-05-16. See section 14 for the
+2026-05-16. Amendments v0.2, v0.3 and v0.4: 2026-05-16. See section 14 for the
 amendment record.
 
 The protocol is versioned on the 0.x line because it is a living
@@ -149,7 +149,8 @@ quantity).
 
 ## 7. Measurement protocol
 
-- Replications per cell: 40, with distinct seeds.
+- Replications per cell: 20, with distinct seeds (amended to 20 in v0.4; the
+  frozen v0.1 value was 40, reduced to fit the 3 hour compute ceiling).
 - Seed scheme: `seed = 10000 * cell_id + replication_index`, fixed in advance;
   the `cell_id` map is generated and frozen together with this document, in
   `benchmark/cell_map.csv`.
@@ -181,16 +182,24 @@ elapsed budget. A `budget-exceeded` outcome is a datum, not a failure: it
 bounds the backend's ESS/s from above in that cell and, set against a Stage B
 GPU cell that completes, is direct evidence for H3.
 
-A cell verdict uses the replications that completed. A cell whose 40
-replications all hit `B` is recorded as `intractable` for that backend. Runs
-are executed in parallel across CPU cores; each run stays single-threaded, so
-parallelism raises throughput without changing the per-run timing that the
-ESS/s metric depends on.
+A cell verdict uses the replications that completed. A cell whose replications
+all hit `B` is recorded as `intractable` for that backend. Runs are executed in
+parallel across CPU cores; each run stays single-threaded, so parallelism
+raises throughput without changing the per-run timing that the ESS/s metric
+depends on.
+
+The operational parameters of the registered Stage A M1 run are fixed by
+amendment v0.4 to meet a 3 hour compute ceiling and a 30 GB memory ceiling set
+by the author: `B = 30` s, 20 replications, 8 parallel workers, a virtual
+memory cap per worker so the workers together cannot exceed the memory
+ceiling, replication-major job ordering so an early stop leaves every cell with
+an equal completed-replication count, and a global watchdog at 2 h 50 m that
+guarantees the run ends within the ceiling.
 
 ## 8. Statistical analysis
 
 Per cell, the median ESS/s and its 95 percent bootstrap confidence interval
-over the 40 replications are reported. The H2 and H3 comparisons use the ratio
+over the completed replications are reported. The H2 and H3 comparisons use the ratio
 of medians between gpumetropolis and the reference competitor, with a bootstrap
 CI. The decision rules of section 3 are applied to those CIs, not to point
 estimates. No decision rests on a difference of means without a CI.
@@ -308,3 +317,23 @@ Why this is not a weakening of the design. The infeasible cells are precisely
 the regime the GPU exists to serve. A `budget-exceeded` record is the honest
 CPU datum for those cells and feeds H3 directly. Stage B runs the same cells
 on the GPU. The amendment precedes the registered Stage A run.
+
+### v0.4, 2026-05-16: 3 hour compute ceiling and 30 GB memory ceiling
+
+Change. The author set a hard 3 hour wall-clock ceiling and a 30 GB memory
+ceiling for the registered Stage A M1 run. Section 7 and section 7.1 are
+amended: replications per cell from 40 to 20; per-run budget `B` from 120 s to
+30 s; 8 parallel workers each under a virtual memory cap; replication-major job
+ordering; a global watchdog at 2 h 50 m.
+
+Rationale. The per-run budget alone does not bound the total: with the full
+factorial a large fraction of cells reach `B`, and the sum still runs to tens
+of hours. The author chose a fixed wall-clock ceiling instead. Replication-major
+ordering means that if the watchdog stops the run early, every cell still has
+the same number of completed replications, so the design stays balanced.
+
+Effect on the analysis. Twenty replications still support a bootstrap
+confidence interval for a median; the interval is wider than at 40. The
+decision rules of section 3 are unchanged and are still applied to the
+intervals. The reduction is recorded as a loss of precision, not a change of
+the hypotheses. The amendment precedes the registered Stage A run.
