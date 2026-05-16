@@ -152,6 +152,9 @@ pub fn loglik_sum(
     match backend {
         crate::gpu::Backend::Cpu => run::<cubecl::cpu::CpuRuntime>(prog, params, n_chains),
         crate::gpu::Backend::Cuda => run::<cubecl::cuda::CudaRuntime>(prog, params, n_chains),
+        crate::gpu::Backend::Vulkan => {
+            run::<cubecl::wgpu::WgpuRuntime>(prog, params, n_chains)
+        }
     }
 }
 
@@ -342,6 +345,9 @@ pub fn gpu_metropolis(
             loglik, prior_code, prior_consts, init, proposal_sd, n_iter, seed,
         ),
         crate::gpu::Backend::Cuda => run_metropolis::<cubecl::cuda::CudaRuntime>(
+            loglik, prior_code, prior_consts, init, proposal_sd, n_iter, seed,
+        ),
+        crate::gpu::Backend::Vulkan => run_metropolis::<cubecl::wgpu::WgpuRuntime>(
             loglik, prior_code, prior_consts, init, proposal_sd, n_iter, seed,
         ),
     }

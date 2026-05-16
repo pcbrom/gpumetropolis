@@ -12,7 +12,7 @@ gpu_metropolis(
   n_iter = 2000L,
   n_chains = 4L,
   seed = 1L,
-  backend = c("cpu", "cuda")
+  backend = c("cpu", "cuda", "vulkan")
 )
 }
 \arguments{
@@ -36,7 +36,8 @@ Default 4.}
 
 \item{seed}{Integer seed. Each chain runs an independent PCG64 stream.}
 
-\item{backend}{Compute backend: \code{"cpu"} or \code{"cuda"}. Default \code{"cpu"}.}
+\item{backend}{Compute backend: \code{"cpu"}, \code{"cuda"} (NVIDIA-native) or
+\code{"vulkan"} (vendor-agnostic, through wgpu). Default \code{"cpu"}.}
 }
 \value{
 An object of class \code{gpum_fit}: a list with \code{draws} (an \code{n_iter} by

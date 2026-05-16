@@ -33,18 +33,22 @@ fn gaussian_logdens_kernel(
     }
 }
 
-/// Compute backend for the kernel.
+/// Compute backend for the kernel. `Cuda` is the NVIDIA-native path; `Vulkan`
+/// is the vendor-agnostic path through wgpu, reaching whatever GPU the host's
+/// Vulkan layer exposes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
     Cpu,
     Cuda,
+    Vulkan,
 }
 
 impl Backend {
     /// Parse a backend name; unknown names fall back to the CPU.
     pub fn from_name(name: &str) -> Backend {
         match name.to_ascii_lowercase().as_str() {
-            "cuda" | "gpu" => Backend::Cuda,
+            "cuda" => Backend::Cuda,
+            "vulkan" | "wgpu" => Backend::Vulkan,
             _ => Backend::Cpu,
         }
     }
@@ -91,5 +95,8 @@ pub fn gaussian_logdens(
     match backend {
         Backend::Cpu => run::<cubecl::cpu::CpuRuntime>(candidates, data, inv_two_var),
         Backend::Cuda => run::<cubecl::cuda::CudaRuntime>(candidates, data, inv_two_var),
+        Backend::Vulkan => {
+            run::<cubecl::wgpu::WgpuRuntime>(candidates, data, inv_two_var)
+        }
     }
 }
