@@ -136,30 +136,39 @@ committed before any result existed. The primary metric is effective sample
 size per second, computed uniformly with `coda` so the estimator is not a
 confounder.
 
-The figure below is from the reduced run (protocol amendments v0.5 and v0.6:
-model M1, the Gaussian mean; ten replications per cell; sized to a 30 minute
-ceiling). The full factorial remains the registered target.
+The figure below is from the full M1 run (protocol amendments v0.5 and v0.6:
+model M1, the Gaussian mean; fifteen replications per cell over the registered
+grid of data sizes N and chain counts C; 1129 completed runs). The full
+factorial over models M2 to M4 remains the registered target.
 
 ![ESS per second by backend](man/figures/benchmark_ess_per_sec.png)
 
 The result, stated plainly:
 
-- Correctness first: all eight backends pass the H1 gate, the Holm-Bonferroni
-  family-wise correction over the Kolmogorov-Smirnov tests; R-hat has median
-  1.001 across every completed run.
-- With **one chain**, `gpumetropolis` does not beat the mature CPU packages:
-  its CUDA backend reaches 0.4 to 0.65 times the effective sample size per
-  second of the best competitor. A GPU does not help a single chain; this is
-  the regime the caveats name.
-- With **many chains**, the picture inverts. At 64 chains the CUDA backend is
-  11 to 35 times the best competitor. At 4096 chains it is the only backend
-  that completes the cell at all: the competitors do not run thousands of
-  chains within the time budget.
+- Correctness first. Seven of the eight backends pass the H1 gate, the
+  Holm-Bonferroni family-wise correction over the Kolmogorov-Smirnov tests,
+  with no surviving rejection; the Vulkan backend carries one. The protocol's
+  v0.2 secondary diagnostic resolves this: the per-backend KS rejection rate at
+  nominal `alpha = 0.05` ranges from 4.1 to 10.3 percent across all eight
+  backends, with `MCMCpack`, a mature reference package, the highest at 10.3
+  percent and Vulkan below it at 9.5 percent. The KS gate is anti-conservative
+  on the autocorrelated draws MCMC produces, gate-wide and not specific to one
+  backend; the single Holm survivor reflects that property, not a Vulkan
+  defect. R-hat has median 1.0016 and maximum 1.0199 across every completed
+  run.
+- With **one chain**, `gpumetropolis` does not beat the mature CPU packages.
+  At N = 1e3 its CUDA backend reaches 0.99 times the effective sample size per
+  second of the best competitor, parity; at N = 1e5 it reaches 0.07 times. A
+  GPU does not help a single chain; this is the regime the caveats name.
+- With **many chains**, the picture inverts. At 64 chains and N = 1e3 the CUDA
+  backend is 54 times the best competitor. At 4096 chains it is the only
+  backend that completes the cell at all: the competitors do not run thousands
+  of chains within the time budget.
 
 So the honest reading: `gpumetropolis` earns its place in the many-chains
 regime and on the portability of one kernel source across CPU, CUDA and
 Vulkan, not as a faster single-chain sampler. The per-cell numbers are in
-[`benchmark/reduced_m1_cell_summary.csv`](https://github.com/pcbrom/gpumetropolis/blob/main/benchmark/reduced_m1_cell_summary.csv).
+[`benchmark/full_m1_cell_summary.csv`](https://github.com/pcbrom/gpumetropolis/blob/main/benchmark/full_m1_cell_summary.csv).
 
 The machine and software environment of the benchmark host is recorded in
 [`benchmark/ENVIRONMENT.md`](https://github.com/pcbrom/gpumetropolis/blob/main/benchmark/ENVIRONMENT.md),

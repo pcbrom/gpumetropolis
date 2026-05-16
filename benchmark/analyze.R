@@ -1,13 +1,13 @@
-# Analysis of the reduced experiment run.
+# Analysis of the full M1 experiment run.
 #
-# Reads benchmark/results/reduced_m1/results.csv, applies the H1 correctness
+# Reads benchmark/results/full_m1/results.csv, applies the H1 correctness
 # gate, summarises ESS per second per cell with bootstrap confidence
 # intervals, writes the per-cell table, and draws the performance figure
 # embedded in the README.
 #
 # Usage: Rscript benchmark/analyze.R
 
-results_csv <- "benchmark/results/reduced_m1/results.csv"
+results_csv <- "benchmark/results/full_m1/results.csv"
 fig_dir <- "man/figures"
 dir.create(fig_dir, showWarnings = FALSE, recursive = TRUE)
 
@@ -37,7 +37,7 @@ cell_tab <- do.call(rbind, lapply(split(co, key), function(d) {
 cell_tab <- cell_tab[order(cell_tab$backend, as.numeric(cell_tab$N),
                            cell_tab$C), ]
 # The per-cell summary is committed (the raw per-run results are not).
-utils::write.csv(cell_tab, "benchmark/reduced_m1_cell_summary.csv",
+utils::write.csv(cell_tab, "benchmark/full_m1_cell_summary.csv",
                  row.names = FALSE)
 
 # H1 correctness gate: Holm-Bonferroni over each backend's family of KS tests.
