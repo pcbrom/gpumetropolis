@@ -24,7 +24,7 @@ n_iter <- 4000L          # tuned so the reference reaches ESS >= 400 per chain
 budget_sec <- 30L        # per-run wall-clock budget B
 parallel_jobs <- 8L      # parallel workers
 n_reps <- 20L            # replications per cell, target
-ulimit_kb <- 3600000L    # virtual memory cap per job: 8 * 3.6 GB = 28.8 GB
+ulimit_kb <- 8000000L    # virtual memory backstop per job against a runaway
 watchdog_sec <- 10200L   # global watchdog: 2 h 50 m, guards the 3 h ceiling
 out_dir <- "benchmark/results/stageA_m1"
 backends <- c("gpumetropolis-CPU", "mcmc", "MCMCpack", "nimble",
@@ -35,6 +35,12 @@ cell_map <- utils::read.csv("benchmark/cell_map.csv", colClasses = c(
   N = "character", C = "integer", stage = "character"
 ))
 cm <- cell_map[cell_map$model == "M1" & cell_map$backend %in% backends, ]
+
+# Recorded exclusion (protocol section 4): nimble builds an explicit graph node
+# per observation, so a model with 1e5 or more likelihood nodes is outside its
+# idiomatic design and its build dominates memory and time. nimble runs N up to
+# 1e4; the larger N cells are excluded for nimble and recorded.
+cm <- cm[!(cm$backend == "nimble" & as.numeric(cm$N) >= 1e5), ]
 
 if (mode == "pilot") {
   cm <- cm[cm$backend %in% c("gpumetropolis-CPU", "Stan-cmdstanr") &
@@ -70,10 +76,13 @@ message(sprintf(paste0("stage A %s: %d cells, %d jobs, budget %ds, %d ",
 # Run all jobs. Each job: virtual-memory cap, then a per-run timeout. The whole
 # sweep is wrapped in the global watchdog.
 t_start <- Sys.time()
+# Each job: single-threaded BLAS (protocol section 7, and it avoids
+# oversubscribing the cores), a virtual memory backstop, then the per-run
+# timeout. The whole sweep is wrapped in the global watchdog.
 cmd <- sprintf(
   paste0("timeout -k 30 %d xargs -a %s -L1 -P %d bash -c ",
-         "'ulimit -v %d; timeout -k 15 %d Rscript benchmark/run_one.R ",
-         "\"$@\"' _"),
+         "'export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1; ulimit -v %d; ",
+         "timeout -k 15 %d Rscript benchmark/run_one.R \"$@\"' _"),
   watchdog_sec, jobs_file, parallel_jobs, ulimit_kb, budget_sec
 )
 watchdog_exit <- system(cmd)
