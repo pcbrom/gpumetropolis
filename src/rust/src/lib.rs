@@ -1,5 +1,7 @@
 use extendr_api::prelude::*;
 
+mod chain_kernel;
+mod cpu_native;
 mod gpu;
 mod interp;
 mod model;
@@ -126,27 +128,24 @@ fn rust_gpu_metropolis(
     let ll_code: Vec<u32> = loglik_code.iter().map(|&v| v as u32).collect();
     let ll_consts: Vec<f32> = loglik_consts.iter().map(|&v| v as f32).collect();
     let data_f: Vec<f32> = data.iter().map(|&v| v as f32).collect();
-    let prog = interp::Program {
-        code: &ll_code,
-        consts: &ll_consts,
-        n_params: n_params as u32,
-        data: &data_f,
-        n_cols: n_cols as u32,
-        n_obs: n_obs as u32,
-    };
     let pr_code: Vec<u32> = prior_code.iter().map(|&v| v as u32).collect();
     let pr_consts: Vec<f32> = prior_consts.iter().map(|&v| v as f32).collect();
     let init_f: Vec<f32> = init.iter().map(|&v| v as f32).collect();
     let psd_f: Vec<f32> = proposal_sd.iter().map(|&v| v as f32).collect();
 
-    let res = interp::gpu_metropolis(
-        &prog,
+    let res = chain_kernel::gpu_metropolis_chain(
+        &ll_code,
+        &ll_consts,
         &pr_code,
         &pr_consts,
+        n_params as usize,
+        &data_f,
+        n_cols as usize,
+        n_obs as usize,
         &init_f,
         &psd_f,
         n_iter as usize,
-        seed as u64,
+        seed as u32,
         gpu::Backend::from_name(backend),
     );
     let draws: Vec<f64> = res.draws.iter().map(|&v| v as f64).collect();
