@@ -36,4 +36,12 @@ rust_gaussian_logdens_gpu <- function(candidates, data, sigma, backend) .Call(wr
 #' @noRd
 rust_loglik_sum <- function(code, consts, n_params, data, n_cols, n_obs, params, n_chains, backend) .Call(wrap__rust_loglik_sum, code, consts, n_params, data, n_cols, n_obs, params, n_chains, backend)
 
+#' Run the generic batched Metropolis sampler over a compiled model.
+#'
+#' Internal worker behind `gpu_metropolis()`. The log-density is given as
+#' compiled bytecode; `draws` is returned flat in the column-major order of an
+#' R array of dimension (n_iter, n_chains, n_params).
+#' @noRd
+rust_gpu_metropolis <- function(loglik_code, loglik_consts, n_params, data, n_cols, n_obs, prior_code, prior_consts, init, proposal_sd, n_iter, seed, backend) .Call(wrap__rust_gpu_metropolis, loglik_code, loglik_consts, n_params, data, n_cols, n_obs, prior_code, prior_consts, init, proposal_sd, n_iter, seed, backend)
+
 # nolint end
