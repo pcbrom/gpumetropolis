@@ -28,4 +28,12 @@ rust_metropolis_gaussian_mean <- function(data, sigma, n_iter, init, proposal_sd
 #' @noRd
 rust_gaussian_logdens_gpu <- function(candidates, data, sigma, backend) .Call(wrap__rust_gaussian_logdens_gpu, candidates, data, sigma, backend)
 
+#' Evaluate a compiled log-likelihood bytecode program over all chains.
+#'
+#' Internal worker behind the generic API. `code` holds opcode/arg pairs,
+#' `params` holds `n_chains * n_params` values grouped by chain. Returns one
+#' log-likelihood sum per chain.
+#' @noRd
+rust_loglik_sum <- function(code, consts, n_params, data, n_cols, n_obs, params, n_chains, backend) .Call(wrap__rust_loglik_sum, code, consts, n_params, data, n_cols, n_obs, params, n_chains, backend)
+
 # nolint end

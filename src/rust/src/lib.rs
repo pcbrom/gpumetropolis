@@ -1,6 +1,7 @@
 use extendr_api::prelude::*;
 
 mod gpu;
+mod interp;
 mod model;
 mod sampler;
 
@@ -64,6 +65,42 @@ fn rust_gaussian_logdens_gpu(
         .collect()
 }
 
+/// Evaluate a compiled log-likelihood bytecode program over all chains.
+///
+/// Internal worker behind the generic API. `code` holds opcode/arg pairs,
+/// `params` holds `n_chains * n_params` values grouped by chain. Returns one
+/// log-likelihood sum per chain.
+/// @noRd
+#[extendr]
+fn rust_loglik_sum(
+    code: Vec<i32>,
+    consts: Vec<f64>,
+    n_params: i32,
+    data: Vec<f64>,
+    n_cols: i32,
+    n_obs: i32,
+    params: Vec<f64>,
+    n_chains: i32,
+    backend: &str,
+) -> Vec<f64> {
+    let code_u: Vec<u32> = code.iter().map(|&v| v as u32).collect();
+    let consts_f: Vec<f32> = consts.iter().map(|&v| v as f32).collect();
+    let data_f: Vec<f32> = data.iter().map(|&v| v as f32).collect();
+    let params_f: Vec<f32> = params.iter().map(|&v| v as f32).collect();
+    let prog = interp::Program {
+        code: &code_u,
+        consts: &consts_f,
+        n_params: n_params as u32,
+        data: &data_f,
+        n_cols: n_cols as u32,
+        n_obs: n_obs as u32,
+    };
+    interp::loglik_sum(&prog, &params_f, n_chains as usize, gpu::Backend::from_name(backend))
+        .into_iter()
+        .map(|v| v as f64)
+        .collect()
+}
+
 // Macro to generate exports.
 // This ensures exported functions are registered with R.
 // See corresponding C code in `entrypoint.c`.
@@ -72,4 +109,5 @@ extendr_module! {
     fn rust_log_density_batch;
     fn rust_metropolis_gaussian_mean;
     fn rust_gaussian_logdens_gpu;
+    fn rust_loglik_sum;
 }
