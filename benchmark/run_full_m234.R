@@ -35,8 +35,13 @@ grid_m4 <- expand.grid(C = c_levels, N = 1, backend = backends,
                        model = "M4", KEEP.OUT.ATTRS = FALSE,
                        stringsAsFactors = FALSE)
 grid <- rbind(grid_nc, grid_m4)
-grid <- grid[order(match(grid$model, c("M2", "M3", "M4")),
-                    match(grid$backend, backends), grid$N, grid$C), ]
+# Run small cells first, interleaved across the three models: a cell at a
+# small N and C completes in well under the cap, a cell at a large N can hit
+# it. Ordering by N then C then model means the fast, informative cells of
+# every model finish before the global watchdog, and the expensive large-N
+# cells are the ones recorded as budget-exceeded if the box is reached.
+grid <- grid[order(grid$N, grid$C, match(grid$model, c("M2", "M3", "M4")),
+                    match(grid$backend, backends)), ]
 # Recorded exclusion, as in the M1 run: nimble runs N up to 1e4 only.
 grid <- grid[!(grid$backend == "nimble" & grid$N >= 1e5), ]
 # M4 mixes slowly under the ill-conditioned geometry, so it is given a longer
