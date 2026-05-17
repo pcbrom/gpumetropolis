@@ -15,5 +15,8 @@ BRIEFING.md
 .Rapp.history
 benchmark/results/
 benchmark/models/m1
+benchmark/models/m2
+benchmark/models/m3
+benchmark/models/m4
 benchmark/models/*.hpp
 benchmark/models/*.o
