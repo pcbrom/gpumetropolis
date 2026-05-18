@@ -15,6 +15,10 @@ r <- utils::read.csv(results_csv, stringsAsFactors = FALSE)
 co <- r[r$outcome == "completed", ]
 models <- c("M2", "M3", "M4")
 
+# Fixed seed so the bootstrap confidence intervals are reproducible: a rerun
+# of this script on the same results.csv yields a byte-identical summary.
+set.seed(20260518L)
+
 # Bootstrap 95 percent confidence interval of the median.
 boot_ci <- function(x, b = 3000) {
   x <- x[is.finite(x)]
