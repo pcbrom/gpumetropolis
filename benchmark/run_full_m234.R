@@ -14,13 +14,17 @@
 # Usage: Rscript benchmark/run_full_m234.R
 
 cell_cap_sec <- 60L
-parallel_jobs <- 10L
+parallel_jobs <- 4L        # capped at 4 cores to keep the host responsive
 n_reps <- 15L
-watchdog_sec <- 3000L      # 50 minute global watchdog
+watchdog_sec <- 4200L      # 70 minute global watchdog
 out_dir <- "benchmark/results/full_m234"
 
 n_levels <- c(1e2, 1e3, 1e4, 1e5, 1e6, 1e7)
 c_levels <- c(1L, 8L, 64L, 512L, 4096L, 32768L)
+# M4 is three-dimensional with a long iteration budget; its draw array grows
+# as n_iter * C * dim, so the chain count is capped at 4096. At C = 32768 the
+# array reaches the tens of gigabytes and exhausts both host and GPU memory.
+c_levels_m4 <- c(1L, 8L, 64L, 512L, 4096L)
 backends <- c("gpumetropolis-cpu", "gpumetropolis-cuda",
               "gpumetropolis-vulkan", "mcmc", "MCMCpack", "nimble",
               "BayesianTools", "Stan-cmdstanr")
@@ -31,7 +35,7 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 grid_nc <- expand.grid(C = c_levels, N = n_levels, backend = backends,
                        model = c("M2", "M3"), KEEP.OUT.ATTRS = FALSE,
                        stringsAsFactors = FALSE)
-grid_m4 <- expand.grid(C = c_levels, N = 1, backend = backends,
+grid_m4 <- expand.grid(C = c_levels_m4, N = 1, backend = backends,
                        model = "M4", KEEP.OUT.ATTRS = FALSE,
                        stringsAsFactors = FALSE)
 grid <- rbind(grid_nc, grid_m4)
@@ -46,7 +50,8 @@ grid <- grid[order(grid$N, grid$C, match(grid$model, c("M2", "M3", "M4")),
 grid <- grid[!(grid$backend == "nimble" & grid$N >= 1e5), ]
 # M4 mixes slowly under the ill-conditioned geometry, so it is given a longer
 # iteration budget; it is cheap per iteration as the data is a single value.
-grid$n_iter <- ifelse(grid$model == "M4", 20000L, 4000L)
+# The budget is bounded so the n_iter * C * dim draw array stays in memory.
+grid$n_iter <- ifelse(grid$model == "M4", 8000L, 4000L)
 grid$cell_id <- seq_len(nrow(grid))
 
 message("pre-compiling the Stan models ...")
