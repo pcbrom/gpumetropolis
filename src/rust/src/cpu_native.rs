@@ -101,7 +101,11 @@ pub fn run(
         .into_par_iter()
         .map(|c| {
             let pbase = c * n_params;
-            let seedmix = seed.wrapping_add((c as u32).wrapping_mul(2654435761));
+            // The base seed is hashed before the chain offset is added, so two
+            // runs with consecutive integer seeds get well-separated counter
+            // streams rather than streams that overlap by a one-counter shift.
+            let seedmix =
+                triple32(seed).wrapping_add((c as u32).wrapping_mul(2654435761));
             let mut state: Vec<f64> = init[pbase..pbase + n_params].to_vec();
             let mut prop = state.clone();
             let mut cur = log_post(&state);

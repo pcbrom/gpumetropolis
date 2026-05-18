@@ -131,7 +131,10 @@ fn metropolis_block_kernel(
         let prior_n = usize::cast_from(meta[5]);
         let seed = meta[6];
         let pbase = chain * n_params;
-        let seedmix = seed + u32::cast_from(chain) * 2654435761u32;
+        // The base seed is hashed before the chain offset is added, so two
+        // runs with consecutive integer seeds get well-separated counter
+        // streams rather than streams that overlap by a one-counter shift.
+        let seedmix = triple32(seed) + u32::cast_from(chain) * 2654435761u32;
 
         // Thread 0 seeds the chain state from `init`.
         if tid == 0 {

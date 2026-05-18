@@ -102,7 +102,9 @@ print.gpum_model <- function(x, ...) {
 #' @param n_iter Iterations recorded per chain. Default 2000.
 #' @param n_chains Number of chains. Used only when `init` is `NULL`.
 #'   Default 4.
-#' @param seed Integer seed. Each chain runs an independent PCG64 stream.
+#' @param seed Integer seed. Each chain advances its own counter-based stream
+#'   from a triple32 hash; the seed is itself hashed, so runs with consecutive
+#'   integer seeds get independent streams.
 #' @param backend Compute backend: `"cpu"`, `"cuda"` (NVIDIA-native),
 #'   `"vulkan"` (vendor-agnostic, through wgpu), or `"auto"`. `"auto"` picks
 #'   the CPU for few chains and CUDA for many chains, since a GPU does not help

@@ -34,7 +34,9 @@ the posterior.}
 \item{n_chains}{Number of chains. Used only when \code{init} is \code{NULL}.
 Default 4.}
 
-\item{seed}{Integer seed. Each chain runs an independent PCG64 stream.}
+\item{seed}{Integer seed. Each chain advances its own counter-based stream
+from a triple32 hash; the seed is itself hashed, so runs with consecutive
+integer seeds get independent streams.}
 
 \item{backend}{Compute backend: \code{"cpu"}, \code{"cuda"} (NVIDIA-native),
 \code{"vulkan"} (vendor-agnostic, through wgpu), or \code{"auto"}. \code{"auto"} picks

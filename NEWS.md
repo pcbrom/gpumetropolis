@@ -16,6 +16,10 @@ First development cycle of the package.
   block share the sum over observations through a tree reduction. The CPU
   backend is native Rust, with the log-likelihood JIT-compiled to machine code
   and worked in double precision.
+- Each chain advances a counter-based stream from a triple32 hash. The `seed`
+  argument is itself hashed before the chain offset is applied, so runs with
+  consecutive integer seeds get independent streams rather than streams that
+  overlap by a one-counter shift.
 
 ## Diagnostics
 
