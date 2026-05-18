@@ -188,12 +188,19 @@ The honest reading, model by model:
   R-callback per iteration. The CUDA backend reaches 3.0 times the effective
   sample size per second of the best competitor with a single chain, 225 times
   at 64 chains, and is the only backend to complete the 4096-chain cell.
-  Correctness: H1 is supported for the CUDA backend and every competitor; the
-  CPU and Vulkan backends carry one and two Holm survivors. Recorded caveat:
-  the three `gpumetropolis` backends show a KS rejection rate near 13 percent
-  against about 7 percent for the fixed-scale random-walk competitor `mcmc`.
-  The elevation is consistent across the three backends; it is recorded for
-  investigation, not dismissed.
+  Correctness: the M3 run first showed the `gpumetropolis` backends with a KS
+  rejection rate near 13 percent against about 7 percent for the fixed-scale
+  random-walk competitor `mcmc`. The investigation settled it. A single chain
+  of two million iterations matches the exact posterior at every proposal
+  scale, so the sampler's stationary distribution is correct. The apparent
+  elevation was a benchmark-harness artifact: the seed scheme assigns
+  consecutive seeds to the replications of a cell, and the counter-based RNG
+  mixed the seed additively with the counter, so consecutive seeds gave
+  overlapping streams that correlated `gpumetropolis`'s within-cell
+  replications and inflated the variance of its rejection-rate estimate. The
+  competitors, seeded through R's Mersenne-Twister, were unaffected. The
+  package now hashes the seed, so consecutive seeds give independent streams;
+  the fix does not change the speed or the per-run correctness reported here.
 - **M2, the bimodal model**, is the regime where many chains matter most: a
   single random-walk chain cannot cross between separated modes. The KS pass
   rate against the exact bimodal reference is 0 percent with one chain, 84
