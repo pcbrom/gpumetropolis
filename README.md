@@ -112,7 +112,7 @@ The development follows a phased plan.
   kernel, and the `gpum_model()` / `gpu_metropolis()` API. A model declared by
   formula runs on the CPU, CUDA and Vulkan backends from one source.
 - Phase 2, complete: the block-per-chain kernel with a shared-memory data
-  reduction, the native CPU backend, and the reduced benchmark run below.
+  reduction, and the native CPU backend.
 - Phase 3, factorial complete: the registered factorial over models M1 to M4
   across the eight backends, summarised in the Benchmark section below. CRAN
   submission is the remaining step.
@@ -156,8 +156,12 @@ The result, stated plainly:
   percent and Vulkan below it at 9.5 percent. The KS gate is anti-conservative
   on the autocorrelated draws MCMC produces, gate-wide and not specific to one
   backend; the single Holm survivor reflects that property, not a Vulkan
-  defect. R-hat has median 1.0016 and maximum 1.0199 across every completed
-  run.
+  defect. The investigation reported under M3 below later identified a second
+  harness property, a within-cell correlation from consecutive seeds, that
+  likewise inflated the variance of the `gpumetropolis` rejection estimates in
+  this run; both are properties of the harness, and a long-chain convergence
+  test confirms the sampler itself is correct. R-hat has median 1.0016 and
+  maximum 1.0199 across every completed run.
 - With **one chain**, `gpumetropolis` does not beat the mature CPU packages.
   At N = 1e3 its CUDA backend reaches 0.99 times the effective sample size per
   second of the best competitor, parity; at N = 1e5 it reaches 0.07 times. A
