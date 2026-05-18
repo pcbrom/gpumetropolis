@@ -9,7 +9,26 @@ This is a new submission.
 
 ## R CMD check results
 
-0 errors | 0 warnings | notes to be confirmed on the CRAN-configuration build.
+Local check, `R CMD build` then `R CMD check --as-cran` with the vignette
+built: 0 errors | 1 warning | 2 notes. None is a defect of the package; each
+is an artifact of the local environment or of a not-yet-published commit.
+
+- WARNING, checking top-level files: "A complete check needs the
+  'checkbashisms' script." That script is not installed in the local check
+  environment; it is present on the CRAN check machines, where the warning
+  does not arise. The package's only shell script, `configure`, is plain
+  POSIX sh.
+- NOTE, checking compilation flags used: the local R was built with
+  `-mno-omit-leaf-frame-pointer` in its default CFLAGS, so the check reports
+  the flag for every compiled package. It is a property of the local R, not
+  of this package, and does not arise on the CRAN configuration.
+- NOTE, checking CRAN incoming feasibility: "New submission", as expected;
+  and two README URLs to per-cell benchmark summary files reported 404 at
+  check time because the commits that add those files were not yet pushed to
+  the public repository. They resolve once the repository is updated.
+
+The win-builder and R-hub results, on environments without the two local
+artifacts above, will be added before submission.
 
 ## Notes for the CRAN team
 
