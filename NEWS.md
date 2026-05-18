@@ -1,6 +1,6 @@
-# gpumetropolis (development version)
+# gpumetropolis 0.1.0
 
-First development cycle of the package.
+First release. The package enters CRAN as a focused generic sampler.
 
 ## Sampler
 

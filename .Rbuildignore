@@ -16,3 +16,6 @@
 ^benchmark$
 ^poc$
 ^ROADMAP\.md$
+^TODO\.md$
+^gpumetropolis\.Rcheck$
+^.*\.tar\.gz$
