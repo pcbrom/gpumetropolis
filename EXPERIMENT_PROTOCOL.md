@@ -387,3 +387,63 @@ confidence interval for a median; the interval is wider than at 40. The
 decision rules of section 3 are unchanged and are still applied to the
 intervals. The reduction is recorded as a loss of precision, not a change of
 the hypotheses. The amendment precedes the registered Stage A run.
+
+### v0.7, 2026-05-18: the M2 to M4 extended run, recorded after the run
+
+Status of this amendment. Amendments v0.2 to v0.6 were written before the run
+they affect, as the rule of this section requires. This one is not: it
+documents the M2 to M4 extended run after that run was executed, because the
+M2 to M4 harness was built and run within a single working session. The
+safeguard against a silent change is the git history, which holds the
+verbatim model code, the harness and the commit timestamps, together with the
+fact that the full factorial of section 4, twenty replications and no time
+ceiling, remains the un-run registered target. The M2 to M4 run is an
+extended run in the sense of v0.5, not the registered run, and is labelled as
+such in every report.
+
+The extended run. Models M2, M3 and M4 of section 5 were executed on
+2026-05-18: M2 a separated bimodal posterior, M3 a heavy-tailed Student-t
+location model, M4 an ill-conditioned three-dimensional Gaussian. Fifteen
+replications per cell, a 60 s per-cell cap, a 70 minute global watchdog, four
+parallel workers; 2568 replications completed.
+
+Design choices recorded.
+
+- M4 has no observed data; it is a fixed Gaussian target. The data-size axis N
+  of the section-4 factorial does not apply to it, so M4 was swept over the
+  chain count C only, at a single nominal N. The part of the section-4 grid
+  that lists M4 against every N is recorded here as not applicable rather than
+  run.
+- The M2 reference truth is the closed-form symmetric bimodal posterior, not
+  the numerical quadrature named in section 5. The closed form is exact up to
+  a negligible truncation; the deviation is recorded for completeness.
+- The M3 reference truth is one-dimensional quadrature of the log-posterior,
+  which matches the section-5 description.
+- Iteration budget: 4000 per chain for M2 and M3, 8000 for M4, which mixes
+  slowly under the ill-conditioned geometry and is cheap per iteration.
+- The chain count for M4 is capped at 4096: M4 is three-dimensional and its
+  draw array grows as `n_iter * C * dim`, so `C = 32768` would reach tens of
+  gigabytes of host memory.
+
+Resource policy. The run is bounded to four parallel workers; a per-cell
+memory guard records any cell whose draw array would exceed 2.5 GB as
+budget-exceeded rather than running it; a RAM guardian aborts the run above a
+memory threshold. This is the operational counterpart, for the M2 to M4 run,
+of the v0.4 ceilings.
+
+The random-number-stream correction. The M1 runs and this M2 to M4 run were
+executed with a counter-based RNG that mixed the base seed additively with the
+counter. The seed scheme of section 7, `10000 * cell_id + replication`,
+assigns consecutive seeds to the replications of a cell, and consecutive seeds
+under that RNG produced counter streams overlapping by a one-counter shift.
+This correlated gpumetropolis's within-cell replications; the competitors,
+seeded through R's Mersenne-Twister, were unaffected. The effect is on the
+variance of gpumetropolis's per-cell KS rejection-rate estimate, not on its
+expectation: each individual run is a correct, valid MCMC run, which a
+separate long-chain convergence check confirms, a single chain of two million
+iterations matching the exact posterior at every proposal scale. The package
+was corrected after this run to hash the seed, so consecutive seeds give
+independent streams. The ESS-per-second results and the H1 correctness
+conclusions are unaffected; a re-run on the corrected RNG would tighten the
+variance of the gpumetropolis rejection-rate estimates without changing a
+verdict.

@@ -177,7 +177,8 @@ Vulkan, not as a faster single-chain sampler. The per-cell numbers are in
 The registered factorial continues with three harder targets: M2 a separated
 bimodal posterior, M3 a heavy-tailed Student-t location model, M4 an
 ill-conditioned three-dimensional Gaussian. The run completed 2568
-replications across the three models.
+replications across the three models; its design and the departures from the
+registered factorial are recorded in protocol amendment v0.7.
 
 ![ESS per second by backend, models M2 to M4](man/figures/benchmark_m234_ess_per_sec.png)
 
