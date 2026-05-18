@@ -1,0 +1,176 @@
+---
+title: "Getting started with gpumetropolis"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting started with gpumetropolis}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+`gpumetropolis` is a generic random-walk Metropolis-Hastings sampler. A model
+is declared by writing its log-likelihood as an ordinary R formula; the
+package compiles that formula to a portable kernel that runs on the CPU and on
+the GPU from one source. The sampler advances many independent chains in one
+batched pass.
+
+This vignette walks through the workflow on the CPU backend, which every
+build provides. The CUDA and Vulkan backends are optional and are noted where
+they apply.
+
+```{r library}
+library(gpumetropolis)
+```
+
+## Declaring a model
+
+A model is declared with `gpum_model()`. The argument `loglik` is a one-sided
+formula giving the per-observation log-likelihood, up to an additive constant,
+in the parameter and data names. The example below is the Gaussian mean with
+a known standard deviation of 2 and a flat prior on the mean. Its posterior is
+available in closed form, which makes it a clean check that the sampler
+recovers a known quantity.
+
+```{r model}
+model <- gpum_model(
+  loglik = ~ -((y - mu)^2) / 8,   # sigma = 2, so 0.5 / sigma^2 = 1 / 8
+  params = "mu",
+  data = "y"
+)
+model
+```
+
+The operations allowed in a formula are `+`, `-`, `*`, `/`, `^`, unary `-`,
+and `exp`, `log`, `sqrt`. A symbol that is neither a declared parameter nor a
+data column, or a function outside this set, is rejected at compile time with
+a clear message.
+
+## Running the sampler
+
+`gpu_metropolis()` runs the sampler. The data is passed as a named list, one
+entry per declared data column. `proposal_sd` is the standard deviation of the
+Gaussian random-walk proposal and should be tuned to the scale of the
+posterior; here the posterior standard deviation is about
+`2 / sqrt(n)`.
+
+```{r run}
+set.seed(1)
+y <- rnorm(5000, mean = 3.4, sd = 2)
+
+fit <- gpu_metropolis(
+  model, data = list(y = y),
+  proposal_sd = 0.06, n_iter = 2000, n_chains = 8,
+  seed = 1, backend = "cpu"
+)
+fit
+```
+
+The printed summary reports the acceptance rate and the posterior mean and
+standard deviation of each parameter, computed after discarding the first half
+of the iterations as warmup.
+
+## The fit object
+
+The draws are in `fit$draws`, an array of `n_iter` by `n_chains` by
+`n_params`, with the parameters named on the third dimension.
+
+```{r draws}
+dim(fit$draws)
+mu_draws <- fit$draws[, , "mu"]   # iterations by chains
+```
+
+The closed-form posterior of this model is available through
+`gaussian_mean_posterior()`, so the sampler can be checked against the exact
+answer.
+
+```{r truth}
+truth <- gaussian_mean_posterior(y, sigma = 2)
+post <- mu_draws[1001:2000, ]     # post-warmup draws
+c(sampler_mean = mean(post), exact_mean = truth$mean)
+c(sampler_sd = sd(as.vector(post)), exact_sd = truth$sd)
+```
+
+## Convergence diagnostics
+
+The package computes the split R-hat statistic and the effective sample size.
+Both accept the `n_iter` by `n_chains` matrix of one parameter's draws.
+
+```{r diagnostics}
+rhat(mu_draws)   # split potential scale reduction factor, near 1 at convergence
+ess(mu_draws)    # effective sample size, summed over chains
+```
+
+R-hat near 1 indicates the chains have mixed; the effective sample size
+reports how many independent draws the autocorrelated output is worth.
+
+## One source, several backends
+
+The same model declaration runs on the CPU, CUDA and Vulkan backends. Only the
+`backend` argument changes. The CUDA and Vulkan backends are optional Cargo
+features; the lines below run when the package was built with them.
+
+```{r gpu, eval = FALSE}
+# the same declaration, dispatched to the GPU
+fit_gpu <- gpu_metropolis(
+  model, data = list(y = y),
+  proposal_sd = 0.06, n_iter = 2000, n_chains = 8,
+  seed = 1, backend = "cuda"
+)
+```
+
+Equivalence between two MCMC runs is distributional, never bit-exact, because
+the algorithm is stochastic. `ks_equivalence()` runs a two-sample
+Kolmogorov-Smirnov test, thinning the pooled draws to the effective sample
+size first, since that test assumes independent draws. The check below
+compares two CPU runs from different seeds; the same call compares a CPU run
+against a GPU run.
+
+```{r equivalence}
+fit_b <- gpu_metropolis(
+  model, data = list(y = y),
+  proposal_sd = 0.06, n_iter = 2000, n_chains = 8,
+  seed = 2, backend = "cpu"
+)
+ks_equivalence(fit$draws[, , "mu"], fit_b$draws[, , "mu"])
+```
+
+## A model with more than one parameter
+
+The DSL is not restricted to one parameter or to the Gaussian mean. The model
+below has an unknown mean `mu` and an unknown log standard deviation `ls`;
+`proposal_sd` then takes one value per parameter.
+
+```{r two-params}
+set.seed(2)
+y2 <- rnorm(3000, mean = 2, sd = 1.5)
+
+model2 <- gpum_model(
+  loglik = ~ -((y - mu)^2) / (2 * exp(2 * ls)) - ls,
+  params = c("mu", "ls"),
+  data = "y"
+)
+
+init <- cbind(seq(-1, 5, length.out = 6), seq(-1, 1, length.out = 6))
+fit2 <- gpu_metropolis(
+  model2, data = list(y = y2), init = init,
+  proposal_sd = c(0.03, 0.02), n_iter = 4000, seed = 3, backend = "cpu"
+)
+
+post2 <- fit2$draws[2001:4000, , ]
+c(mu = mean(post2[, , "mu"]), ls = mean(post2[, , "ls"]), log_sd_true = log(1.5))
+```
+
+## When the GPU helps
+
+A GPU does not accelerate every MCMC run. The sequential dependence inside one
+chain cannot be parallelised. The parallelism comes from two axes: many
+independent chains, and the data-parallel evaluation of the log-density. A GPU
+pays off when the log-density is expensive to evaluate, that is over a large
+data set, or when thousands of chains are run. For a small model with few
+chains the transfer overhead dominates and the CPU is faster. The `"auto"`
+backend encodes this rule: it selects the CPU for few chains and a GPU backend
+for many. The package benchmark in the README characterises the regime in a
+refutable way.

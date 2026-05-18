@@ -26,7 +26,10 @@ SystemRequirements: Cargo (Rust's package manager), rustc >= 1.85.0, xz
 Depends:
     R (>= 4.2)
 Suggests:
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
 Config/testthat/edition: 3
+VignetteBuilder: knitr
 URL: https://github.com/pcbrom/gpumetropolis
 BugReports: https://github.com/pcbrom/gpumetropolis/issues
