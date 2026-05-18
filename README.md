@@ -113,7 +113,9 @@ The development follows a phased plan.
   formula runs on the CPU, CUDA and Vulkan backends from one source.
 - Phase 2, complete: the block-per-chain kernel with a shared-memory data
   reduction, the native CPU backend, and the reduced benchmark run below.
-- Phase 3: the full registered factorial, then CRAN submission.
+- Phase 3, factorial complete: the registered factorial over models M1 to M4
+  across the eight backends, summarised in the Benchmark section below. CRAN
+  submission is the remaining step.
 
 ## Roadmap
 
