@@ -138,8 +138,8 @@ confounder.
 
 The figure below is from the full M1 run (protocol amendments v0.5 and v0.6:
 model M1, the Gaussian mean; fifteen replications per cell over the registered
-grid of data sizes N and chain counts C; 1129 completed runs). The full
-factorial over models M2 to M4 remains the registered target.
+grid of data sizes N and chain counts C; 1129 completed runs). The harder
+models M2 to M4 follow in their own subsection below.
 
 ![ESS per second by backend](man/figures/benchmark_ess_per_sec.png)
 
@@ -169,6 +169,57 @@ So the honest reading: `gpumetropolis` earns its place in the many-chains
 regime and on the portability of one kernel source across CPU, CUDA and
 Vulkan, not as a faster single-chain sampler. The per-cell numbers are in
 [`benchmark/full_m1_cell_summary.csv`](https://github.com/pcbrom/gpumetropolis/blob/main/benchmark/full_m1_cell_summary.csv).
+
+### Beyond the Gaussian mean: models M2 to M4
+
+The registered factorial continues with three harder targets: M2 a separated
+bimodal posterior, M3 a heavy-tailed Student-t location model, M4 an
+ill-conditioned three-dimensional Gaussian. The run completed 2568
+replications across the three models.
+
+![ESS per second by backend, models M2 to M4](man/figures/benchmark_m234_ess_per_sec.png)
+
+The honest reading, model by model:
+
+- **M3, the heavy-tailed model**, is the clearest win. The compiled kernel
+  evaluates the Student-t log-density cheaply where the competitors pay an
+  R-callback per iteration. The CUDA backend reaches 3.0 times the effective
+  sample size per second of the best competitor with a single chain, 225 times
+  at 64 chains, and is the only backend to complete the 4096-chain cell.
+  Correctness: H1 is supported for the CUDA backend and every competitor; the
+  CPU and Vulkan backends carry one and two Holm survivors. Recorded caveat:
+  the three `gpumetropolis` backends show a KS rejection rate near 13 percent
+  against about 7 percent for the fixed-scale random-walk competitor `mcmc`.
+  The elevation is consistent across the three backends; it is recorded for
+  investigation, not dismissed.
+- **M2, the bimodal model**, is the regime where many chains matter most: a
+  single random-walk chain cannot cross between separated modes. The KS pass
+  rate against the exact bimodal reference is 0 percent with one chain, 84
+  percent with eight, and falls back to 55 percent at 4096 chains as the test
+  gains power to detect the residual mode-weight sampling error any finite set
+  of chains carries. Every backend is flagged by the family-wise gate for that
+  reason; among the eight, the `gpumetropolis` CUDA and Vulkan backends have
+  the lowest rejection rate, and `BayesianTools` fails the model outright. In
+  speed, CUDA reaches 78 times the best competitor at 64 chains and is again
+  the sole backend completing the 4096-chain cell.
+- **M4, the ill-conditioned Gaussian**, is the model where `gpumetropolis`
+  loses, and the loss is stated plainly. H1 is supported for all eight
+  backends. But `nimble` detects that the target is exactly Gaussian and
+  assigns a conjugate sampler that draws independent samples directly,
+  reaching on the order of three thousand times the effective sample size per
+  second of the `gpumetropolis` random walk. A generic random-walk Metropolis
+  does not, and does not claim to, compete with a specialised algorithm on a
+  target that algorithm is built for. M4 also sharpens the GPU caveat: with no
+  observed data and one chain the CUDA backend is slower than the native CPU
+  backend, since there is no data-parallel work to amortise the kernel launch.
+  R-hat has median 1.10 across M4, the expected signature of slow random-walk
+  mixing on a condition-98 geometry, uniform across backends.
+
+The complete picture: `gpumetropolis` is fast in the regime it claims, many
+chains and an expensive log-density, and M3 shows it can win even with a
+single chain. It is not a faster sampler than a specialised algorithm where
+that algorithm applies, as M4 makes explicit. The per-cell numbers are in
+[`benchmark/full_m234_cell_summary.csv`](https://github.com/pcbrom/gpumetropolis/blob/main/benchmark/full_m234_cell_summary.csv).
 
 The machine and software environment of the benchmark host is recorded in
 [`benchmark/ENVIRONMENT.md`](https://github.com/pcbrom/gpumetropolis/blob/main/benchmark/ENVIRONMENT.md),
