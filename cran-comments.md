@@ -5,30 +5,23 @@ This is a new submission.
 ## Test environments
 
 - local: Ubuntu 24.04, R 4.6.0, rustc 1.95.0
-- (to be completed: win-builder, R-hub, GitHub Actions)
+- win-builder: R-devel and R-release (Windows)
 
 ## R CMD check results
 
-Local check, `R CMD build` then `R CMD check --as-cran` with the vignette
-built: 0 errors | 1 warning | 2 notes. None is a defect of the package; each
-is an artifact of the local environment or of a not-yet-published commit.
+win-builder, R-devel and R-release: 0 errors | 0 warnings | 1 note.
 
-- WARNING, checking top-level files: "A complete check needs the
-  'checkbashisms' script." That script is not installed in the local check
-  environment; it is present on the CRAN check machines, where the warning
-  does not arise. The package's only shell script, `configure`, is plain
-  POSIX sh.
-- NOTE, checking compilation flags used: the local R was built with
-  `-mno-omit-leaf-frame-pointer` in its default CFLAGS, so the check reports
-  the flag for every compiled package. It is a property of the local R, not
-  of this package, and does not arise on the CRAN configuration.
-- NOTE, checking CRAN incoming feasibility: "New submission", as expected;
-  and two README URLs to per-cell benchmark summary files reported 404 at
-  check time because the commits that add those files were not yet pushed to
-  the public repository. They resolve once the repository is updated.
+The note is the same on both: "Possibly misspelled words in DESCRIPTION:
+Gelman, bytecode". Both are correct. "Gelman" is the surname of A. Gelman,
+in the reference "Gelman and Rubin (1992)" cited in the Description for the
+split R-hat statistic; "bytecode" is the standard computing term for the
+compiled stack-machine representation the package uses. There is no other
+note, warning or error on win-builder.
 
-The win-builder and R-hub results, on environments without the two local
-artifacts above, will be added before submission.
+The local check additionally reports a "checkbashisms" warning and a
+"compilation flags used" note; both are artifacts of the local machine, the
+missing `checkbashisms` script and the local R's CFLAGS, and neither arises
+on win-builder, as the result above shows.
 
 ## Notes for the CRAN team
 
