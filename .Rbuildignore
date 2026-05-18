@@ -19,3 +19,4 @@
 ^TODO\.md$
 ^gpumetropolis\.Rcheck$
 ^.*\.tar\.gz$
+^CRAN-SUBMISSION$
