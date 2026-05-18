@@ -37,6 +37,26 @@ adapter <- cpu_adapters[[backend]]
 out_file <- file.path(out_dir, sprintf("%d.csv", cell_id))
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
+# Memory guard. The draw array a cell allocates grows as n_iter * C * dim;
+# a cell large enough to exhaust host memory is recorded as budget-exceeded
+# and never run, so an oversized cell cannot crash the host. The cap sits
+# well above any cell in the registered grid, so it is pure insurance.
+mem_cap_bytes <- 2.5e9
+predicted_bytes <- as.numeric(n_iter) * C * spec$dim * 8
+if (predicted_bytes > mem_cap_bytes) {
+  rows <- data.frame(
+    cell_id = cell_id, model = model, backend = backend,
+    N = format(N, scientific = FALSE, trim = TRUE), C = C,
+    replication = seq_len(n_reps), seed = NA_integer_, n_iter = n_iter,
+    time_sec = NA_real_, total_ess = NA_real_, ess_per_sec = NA_real_,
+    rhat = NA_real_, ks_stat = NA_real_, ks_pvalue = NA_real_,
+    outcome = "budget-exceeded", error = "memory cap",
+    stringsAsFactors = FALSE
+  )
+  utils::write.csv(rows, out_file, row.names = FALSE)
+  quit(save = "no", status = 0L)
+}
+
 # Warmup: one short run, discarded, to pay backend initialisation and the
 # kernel JIT before the timed replications.
 invisible(tryCatch(
