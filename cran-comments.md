@@ -2,6 +2,15 @@
 
 This is a new submission.
 
+Resubmission note: the incoming pretest of the first upload reported that the
+tests and the vignette used more than two cores ("CPU time 3.7 times elapsed
+time"). The native CPU backend parallelises over chains with a Rayon thread
+pool. The package now caps that pool to two threads during `R CMD check`,
+through `tests/testthat/setup.R`, the vignette setup chunk, and a check for
+`_R_CHECK_LIMIT_CORES_` in `gpu_metropolis()`; a user's own run keeps the full
+pool. A local `R CMD check` confirms the tests and the vignette no longer
+exceed elapsed time.
+
 ## Test environments
 
 - local: Ubuntu 24.04, R 4.6.0, rustc 1.95.0
