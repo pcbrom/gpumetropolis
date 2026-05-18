@@ -131,6 +131,17 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
   }
   backend <- match.arg(backend)
 
+  # The native CPU backend parallelises over chains with a Rayon thread pool,
+  # which by default claims every core. Under `R CMD check` the CRAN check
+  # farm allows at most two cores; cap the pool there. Rayon reads
+  # `RAYON_NUM_THREADS` when the pool is first built, so setting it before the
+  # first call into the backend takes effect for the session. A user running
+  # outside the check keeps the full pool.
+  if (nzchar(Sys.getenv("_R_CHECK_LIMIT_CORES_")) &&
+      !nzchar(Sys.getenv("RAYON_NUM_THREADS"))) {
+    Sys.setenv(RAYON_NUM_THREADS = "2")
+  }
+
   if (model$n_cols > 0L) {
     df <- as.data.frame(data, stringsAsFactors = FALSE)
     missing_cols <- setdiff(model$data, names(df))
