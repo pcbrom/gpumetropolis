@@ -1,6 +1,7 @@
 # gpumetropolis 0.1.0
 
-First release. The package enters CRAN as a focused generic sampler.
+First release. The package is distributed through R-universe as a focused
+generic sampler.
 
 ## Sampler
 

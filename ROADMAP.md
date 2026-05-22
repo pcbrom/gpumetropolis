@@ -1,9 +1,9 @@
 # gpumetropolis roadmap
 
-This file records the direction beyond the first CRAN release. It is a
-roadmap, not a commitment: the priority is to ship a focused v0.x to CRAN
-first. The items below are tiered by how they relate to the current scope and
-to the binding decisions of `~/.claude/plans/gpumetropolis-sprint.md`.
+This file records the direction beyond the first release. It is a roadmap,
+not a commitment: the priority was to ship a focused v0.x first. The items
+below are tiered by how they relate to the current scope and to the binding
+decisions of `~/.claude/plans/gpumetropolis-sprint.md`.
 
 ## North star
 
@@ -98,8 +98,8 @@ project with a separate stack.
 ## Sequencing
 
 The priority order is fixed: be a recognised reference as a generic
-vendor-agnostic sampler first, expand scope second. v0.x ships to CRAN as the
-focused generic sampler. Tier 1 is the first post-release work. Tier 2
-follows. The copula and synthetic-data application direction is taken up only
+vendor-agnostic sampler first, expand scope second. v0.x shipped through
+R-universe as the focused generic sampler. Tier 1 is the first post-release
+work. Tier 2 follows. The copula and synthetic-data application direction is taken up only
 after the package is established in its current niche. Tiers 3 to 6 are
 reviewed when v0.x has real users and a concrete demand.

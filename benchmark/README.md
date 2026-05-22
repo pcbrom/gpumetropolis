@@ -1,7 +1,7 @@
 # benchmark/
 
 Harness for the pre-registered experiment of `../EXPERIMENT_PROTOCOL.md`. This
-directory is excluded from the CRAN tarball through `.Rbuildignore`.
+directory is excluded from the package tarball through `.Rbuildignore`.
 
 ## Frozen pre-registration artefacts
 

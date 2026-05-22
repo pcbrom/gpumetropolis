@@ -129,7 +129,7 @@ The development follows a phased plan.
 
 ## Roadmap
 
-The direction beyond the first CRAN release is recorded, tiered, in
+The direction beyond the first release is recorded, tiered, in
 [`ROADMAP.md`](https://github.com/pcbrom/gpumetropolis/blob/main/ROADMAP.md):
 the in-scope Metropolis-Hastings-family next steps (adaptive Metropolis,
 differential evolution MCMC, parallel tempering), the optimisation layers, and

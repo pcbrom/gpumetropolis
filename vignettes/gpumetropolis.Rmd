@@ -10,7 +10,7 @@ vignette: >
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
 # Cap the native CPU backend's Rayon thread pool at two threads while the
-# vignette is built: the CRAN check farm allows at most two cores.
+# vignette is built: R CMD check farms allow at most two cores.
 Sys.setenv(RAYON_NUM_THREADS = "2")
 ```
 
