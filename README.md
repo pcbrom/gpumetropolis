@@ -1,7 +1,4 @@
-<!-- [![CRAN_Status_Badge](https://www.r-pkg.org/badges/last-release/gpumetropolis)](https://cran.r-project.org/package=gpumetropolis) -->
-<!-- [![Downloads from the RStudio CRAN mirror](https://cranlogs.r-pkg.org/badges/grand-total/gpumetropolis)](https://cran.r-project.org/package=gpumetropolis) -->
-<!-- the CRAN badges above are enabled once the package is published -->
-
+[![r-universe](https://pcbrom.r-universe.dev/badges/gpumetropolis)](https://pcbrom.r-universe.dev/gpumetropolis)
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
@@ -14,8 +11,8 @@ A generic Metropolis-Hastings sampler for Markov chain Monte Carlo. The user
 declares a model by writing its log-likelihood and log-prior as ordinary R
 formulas; the package compiles them to a portable kernel that runs on the CPU
 and the GPU from one source. The sampler advances many independent chains in
-one batched pass. It occupies a niche that is currently empty on CRAN: no CRAN
-package offers generic MCMC with a vendor-agnostic GPU-portable kernel.
+one batched pass. It occupies a niche that no general R repository fills: a
+generic MCMC sampler with a vendor-agnostic GPU-portable kernel.
 
 The model expression is compiled to a stack-machine bytecode that a single
 CubeCL kernel interprets, so any model in the supported operation set runs on
@@ -26,13 +23,26 @@ The package is under active development. See `## Project status` below.
 
 ## Installation
 
-The package is not on CRAN yet. The development version requires a Rust
-toolchain (`cargo`, `rustc >= 1.85`); see <https://rustup.rs>. The CUDA backend
-additionally needs the CUDA toolkit. Install from GitHub with:
+The package is distributed through R-universe. It is not on CRAN: the vendored
+Rust dependency tree, dominated by the CUDA and Vulkan stacks, exceeds the CRAN
+tarball-size limit, so R-universe is its home.
+
+Installing requires a Rust toolchain (`cargo`, `rustc >= 1.85`); see
+<https://rustup.rs>.
+
+``` r
+install.packages("gpumetropolis",
+                 repos = c("https://pcbrom.r-universe.dev",
+                           "https://cloud.r-project.org"))
+```
+
+The default build is CPU only. The CUDA and Vulkan GPU backends are optional
+Cargo features; building them needs the corresponding toolkit (the CUDA
+toolkit, or a Vulkan loader). To install from source with a GPU backend:
 
 ``` r
 # install.packages("remotes")
-remotes::install_github("pcbrom/gpumetropolis")
+remotes::install_github("pcbrom/gpumetropolis")  # then build with the feature
 ```
 
 ## Load package
@@ -114,8 +124,8 @@ The development follows a phased plan.
 - Phase 2, complete: the block-per-chain kernel with a shared-memory data
   reduction, and the native CPU backend.
 - Phase 3, factorial complete: the registered factorial over models M1 to M4
-  across the eight backends, summarised in the Benchmark section below. CRAN
-  submission is the remaining step.
+  across the eight backends, summarised in the Benchmark section below. The
+  package is released through R-universe; see Installation above.
 
 ## Roadmap
 
