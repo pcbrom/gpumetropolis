@@ -64,9 +64,10 @@ many-chains GPU architecture.
 
 ## Application direction: copula inference and synthetic data
 
-This is the first application built on the engine rather than a change to the
-engine. It is recorded so the direction is not lost, and it is explicitly
-sequenced after the package is a recognised reference as a generic sampler.
+The application direction is now part of the package itself, not a sibling
+project. The package will grow from a generic Metropolis-Hastings sampler
+into an MCMC-driven copula synthesis engine, all under the `gpumetropolis`
+name. Decision recorded 2026-06-02.
 
 The engine is already close to one useful slice: Bayesian inference of the
 parameter of an extreme-value copula, the Gumbel family, from pseudo-
@@ -74,20 +75,26 @@ observations. The Gumbel copula density is inside the DSL operation set, and
 the DSL already accepts several data columns. A bivariate demonstration is a
 vignette away and needs no engine change.
 
-Tiered honestly:
+The path forward, in dimension order:
 
-- Copula parameter inference, bivariate, extreme-value family, with pseudo-
-  observations as data. In reach with the current DSL.
-- ABC-MCMC: a Metropolis-Hastings accept step that compares simulated and
-  observed summary statistics, for fitting a copula or a generator to a vector
-  of dependence measures, Kendall's tau, Spearman's rho, tail-dependence
-  coefficients, rather than to a likelihood. The accept step stays inside the
-  Metropolis-Hastings family, so it does not reopen decision #1. ABC simulates
-  a full data set per step, the regime the many-chains GPU engine serves.
-- A Bayesian latent-variable generative model, a Gaussian-copula factor model
-  or a latent-Gaussian model: the generative, autoencoder-shaped object whose
-  inference engine is MCMC rather than an amortised encoder. It needs the
-  vector and matrix DSL support of Tier 5.
+- Bivariate copula workflow (`gpum_copula(data, family)`): Gumbel, Clayton,
+  Frank and Gaussian families on two-column data. In reach with the current
+  scalar DSL.
+- Per-column marginal auto-selection: type detection on a data.frame,
+  candidate-family search per column, MCMC fit per marginal. Each column
+  produces a fitted CDF.
+- Vine copula for `d > 2`: pair-copula decomposition (Aas, Czado, Frigessi
+  and Bakken 2009) with structure selection (Dissmann, Brechmann, Czado and
+  Kurowicka 2013). The vine decomposes a `d`-dimensional dependence into
+  `d(d-1)/2` bivariate copulas, each tractable in the current DSL. This is
+  the path that sidesteps the full vector DSL of Tier 5.
+- Synthesis: `generate(fit, n)` samples from the fitted vine, inverts each
+  marginal CDF and returns the synthetic data.frame.
+
+The DSL expansion of Tier 5 leaves the critical path of the application:
+vines reduce dependence to pairs, and pairs fit in the current DSL. Tier 5
+is revisited only if a user reports a case that vines and bivariate copulas
+cannot serve.
 
 Recorded boundary: a neural generative model, a variational autoencoder or a
 normalising-flow copula, is a different computational paradigm, gradient
@@ -97,9 +104,20 @@ project with a separate stack.
 
 ## Sequencing
 
-The priority order is fixed: be a recognised reference as a generic
-vendor-agnostic sampler first, expand scope second. v0.x shipped through
-R-universe as the focused generic sampler. Tier 1 is the first post-release
-work. Tier 2 follows. The copula and synthetic-data application direction is taken up only
-after the package is established in its current niche. Tiers 3 to 6 are
-reviewed when v0.x has real users and a concrete demand.
+The release trajectory is the spine of the roadmap; each release is a
+discrete deliverable, validated before the next opens.
+
+- 0.2.0 (delivered 2026-06-02): Adaptive Metropolis diagonal per chain,
+  per-chain proposal_sd in the kernel, `backend = "auto"` as default and
+  `gpum_diagnose()` as the one-call diagnostic.
+- 0.3.0 (target 2026-06-15): Parallel Tempering for multimodal targets.
+- 0.4.0 (target 2026-06-29): Differential Evolution MCMC for correlated
+  targets without manual covariance.
+- 0.5.0: bivariate copula workflow with the four common families.
+- 0.6.0: per-column marginal auto-selection.
+- 0.7.0: vine copula for `d > 2`.
+- 0.8.0: synthesis, `generate(fit, n)`.
+- 1.0.0: documentation and API polish as the reference release.
+
+Tier 2 (fused kernels for common likelihoods) and Tier 5 (vector and matrix
+DSL) become optional, scheduled only when a real user case pulls them.
