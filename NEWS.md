@@ -1,3 +1,18 @@
+# gpumetropolis 0.2.0 (in development)
+
+- `gpu_metropolis(backend = "auto")` is now the default. The selector
+  picks `"cuda"` when its feature is compiled in, then `"vulkan"`, and
+  falls back to `"cpu"` with a one-shot per-session notice pointing at
+  the source-install recipe.
+- *(in development)* Adaptive Metropolis warmup: the proposal scales
+  (and, for `d > 1`, the proposal covariance) adapt during the warmup
+  phase, so `proposal_sd` is no longer a tuning parameter. Adaptation
+  stops cleanly at the end of warmup to keep ergodicity trivial.
+- *(in development)* `gpum_diagnose(fit)`: one-call diagnostic that
+  prints a per-parameter table (mean, sd, quantiles, R-hat, ESS, MCSE)
+  with a convergence verdict, and opens a multi-panel plot (trace,
+  density, running mean, ACF, acceptance over warmup).
+
 # gpumetropolis 0.1.3
 
 - On attach, the package now notifies the user when a newer version is
