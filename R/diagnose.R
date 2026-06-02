@@ -195,8 +195,8 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
     graphics::matplot(seq_len(nrow(fsd)), fsd, type = "b", lty = 1,
                       xlab = "chain", ylab = "final proposal_sd",
                       main = "Adaptation: final proposal_sd")
-    plot.new()
-    plot.window(xlim = c(0, 1), ylim = c(0, 1))
+    graphics::plot.new()
+    graphics::plot.window(xlim = c(0, 1), ylim = c(0, 1))
     graphics::text(0.5, 0.5,
                    sprintf("%d warmup batches\nsizes %d to %d",
                            nb, min(fit$adaptation$batch_sizes),
