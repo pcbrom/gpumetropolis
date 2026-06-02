@@ -1,6 +1,6 @@
 Package: gpumetropolis
 Title: GPU-Portable Vendor-Agnostic Metropolis-Hastings Sampler
-Version: 0.1.2
+Version: 0.1.3
 Authors@R:
     person("Pedro", "Carvalho Brom", , "pcbrom@gmail.com",
            role = c("aut", "cre", "cph"),

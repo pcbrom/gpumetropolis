@@ -1,3 +1,12 @@
+# gpumetropolis 0.1.3
+
+- On attach, the package now notifies the user when a newer version is
+  available on the R-universe channel of the maintainer. The check is
+  active only in interactive sessions, silent on any network or parse
+  failure, and opt-out via the `GPUMETROPOLIS_NO_VERSION_CHECK`
+  environment variable. The hint includes the source-install command, so
+  the auto-detected GPU backend kicks in on the upgrade.
+
 # gpumetropolis 0.1.2
 
 - `gpu_metropolis()` now discards a warmup portion before returning. The
