@@ -13,7 +13,7 @@ gpu_metropolis(
   n_chains = 4L,
   warmup = NULL,
   seed = 1L,
-  backend = c("cpu", "cuda", "vulkan", "auto")
+  backend = c("auto", "cpu", "cuda", "vulkan")
 )
 }
 \arguments{
@@ -49,9 +49,10 @@ from a triple32 hash; the seed is itself hashed, so runs with consecutive
 integer seeds get independent streams.}
 
 \item{backend}{Compute backend: \code{"cpu"}, \code{"cuda"} (NVIDIA-native),
-\code{"vulkan"} (vendor-agnostic, through wgpu), or \code{"auto"}. \code{"auto"} picks
-the CPU for few chains and CUDA for many chains, since a GPU does not help
-a single chain. Default \code{"cpu"}.}
+\code{"vulkan"} (vendor-agnostic, through wgpu), or \code{"auto"}. \code{"auto"}
+selects \code{"cuda"} when its feature was compiled into the build, then
+\code{"vulkan"}, and falls back to \code{"cpu"} with a one-shot per-session
+message stating that no GPU backend is available. Default \code{"auto"}.}
 }
 \value{
 An object of class \code{gpum_fit}: a list with \code{draws} (an

@@ -120,7 +120,7 @@ pub fn run(
                     ctr += 1;
                     let u2 = rand_uniform(seedmix, ctr);
                     let z = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
-                    prop[j] = state[j] + proposal_sd[j] * z;
+                    prop[j] = state[j] + proposal_sd[pbase + j] * z;
                 }
                 let plp = log_post(&prop);
                 ctr += 1;

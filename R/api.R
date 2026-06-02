@@ -198,10 +198,27 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
     stop("`warmup` must be a non-negative integer strictly less than ",
          "`n_iter`.", call. = FALSE)
   }
-  proposal_sd <- rep_len(as.numeric(proposal_sd), np)
-  if (any(!is.finite(proposal_sd)) || any(proposal_sd <= 0)) {
+  # `proposal_sd` accepts three shapes:
+  #   - a single scalar, recycled to all parameters and chains;
+  #   - a length-`n_params` vector, broadcast across the chains;
+  #   - a `n_chains` by `n_params` matrix, one row per chain.
+  # The kernel reads a flat length-`n_chains * n_params` buffer in
+  # chain-major order, that is `(chain1_dim1, chain1_dim2, ..., chain2_dim1, ...)`.
+  proposal_sd_mat <- if (is.matrix(proposal_sd)) {
+    if (!all(dim(proposal_sd) == c(n_chains, np))) {
+      stop("`proposal_sd` matrix must be `n_chains` by `n_params` (",
+           n_chains, " by ", np, ").", call. = FALSE)
+    }
+    as.matrix(proposal_sd)
+  } else {
+    matrix(rep_len(as.numeric(proposal_sd), np),
+           nrow = n_chains, ncol = np, byrow = TRUE)
+  }
+  storage.mode(proposal_sd_mat) <- "double"
+  if (any(!is.finite(proposal_sd_mat)) || any(proposal_sd_mat <= 0)) {
     stop("`proposal_sd` must be positive and finite.", call. = FALSE)
   }
+  proposal_sd_flat <- as.numeric(t(proposal_sd_mat))
 
   # Resolve "auto" once the chain count is known: a GPU does not help a single
   # chain, so few chains run on the CPU and many chains on a GPU backend, if a
@@ -232,7 +249,7 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
     model$loglik$code, model$loglik$consts, np,
     as.numeric(data_flat), model$n_cols, n_obs,
     model$prior$code, model$prior$consts,
-    as.numeric(t(init_mat)), proposal_sd,
+    as.numeric(t(init_mat)), proposal_sd_flat,
     n_iter, as.numeric(seed), backend
   )
 

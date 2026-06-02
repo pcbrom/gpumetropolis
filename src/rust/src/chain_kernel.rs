@@ -191,7 +191,7 @@ fn metropolis_block_kernel(
                     ctr += 1u32;
                     let u2 = rand_uniform(seedmix, ctr);
                     let z = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
-                    prop[k] = state[k] + proposal_sd[k] * z;
+                    prop[k] = state[k] + proposal_sd[pbase + k] * z;
                     k += 1;
                 }
             }

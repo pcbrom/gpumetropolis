@@ -45,6 +45,42 @@ test_that("gpu_metropolis rejects malformed input", {
                               proposal_sd = -1))
 })
 
+test_that("gpu_metropolis accepts a per-chain proposal_sd matrix", {
+  set.seed(7)
+  y <- rnorm(1000, mean = 0, sd = 1)
+  m <- gpum_model(~ -((y - mu)^2) / 2, params = "mu", data = "y")
+  n_chains <- 4L
+  per_chain_sd <- matrix(c(0.05, 0.10, 0.20, 0.40),
+                         nrow = n_chains, ncol = 1L)
+  fit <- gpu_metropolis(m, data = list(y = y), proposal_sd = per_chain_sd,
+                        n_iter = 2000, n_chains = n_chains, warmup = 0,
+                        seed = 1, backend = "cpu")
+  expect_equal(dim(fit$draws), c(2000L, n_chains, 1L))
+  # Each chain uses a different proposal scale, so the accept rates must
+  # span a wide range: tight proposals accept often, wide ones rarely.
+  expect_gt(fit$accept_rate[1] - fit$accept_rate[4], 0.4)
+})
+
+test_that("a per-chain proposal_sd with a row of zeros is rejected", {
+  m <- gpum_model(~ -((y - mu)^2) / 2, params = "mu", data = "y")
+  bad <- matrix(c(0.1, 0.0, 0.2, 0.1), nrow = 4L, ncol = 1L)
+  expect_error(
+    gpu_metropolis(m, data = list(y = rnorm(20)), proposal_sd = bad,
+                   n_chains = 4L, backend = "cpu"),
+    "positive and finite"
+  )
+})
+
+test_that("a per-chain proposal_sd of the wrong shape is rejected", {
+  m <- gpum_model(~ -((y - mu)^2) / 2, params = "mu", data = "y")
+  bad <- matrix(0.1, nrow = 3L, ncol = 1L)
+  expect_error(
+    gpu_metropolis(m, data = list(y = rnorm(20)), proposal_sd = bad,
+                   n_chains = 4L, backend = "cpu"),
+    "n_chains.*by.*n_params"
+  )
+})
+
 test_that("the CUDA backend matches the CPU backend distributionally", {
   testthat::skip_on_cran()
   cuda_ok <- tryCatch({
