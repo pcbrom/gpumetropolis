@@ -11,6 +11,7 @@ gpu_metropolis(
   proposal_sd = 0.1,
   n_iter = 2000L,
   n_chains = 4L,
+  warmup = NULL,
   seed = 1L,
   backend = c("cpu", "cuda", "vulkan", "auto")
 )
@@ -29,10 +30,19 @@ chains. When \code{NULL}, chains start from independent standard normal draws.}
 recycled to one value per parameter. Default 0.1; tune it to the scale of
 the posterior.}
 
-\item{n_iter}{Iterations recorded per chain. Default 2000.}
+\item{n_iter}{Iterations the sampler runs per chain, counting warmup.
+Default 2000.}
 
 \item{n_chains}{Number of chains. Used only when \code{init} is \code{NULL}.
 Default 4.}
+
+\item{warmup}{Warmup iterations to discard before returning, following the
+convention of Stan and nimble. Must lie in \verb{[0, n_iter)}. Default
+\code{floor(n_iter / 2)}, so \code{fit$draws} is post-warmup and is suitable for
+direct plotting. Set \code{warmup = 0} to keep every iteration, useful for
+inspecting the burn-in trajectory in a trace plot. The 0.1.x warmup is
+a plain trim; an adaptive warmup that also tunes the proposal during the
+burn-in is planned for the next release.}
 
 \item{seed}{Integer seed. Each chain advances its own counter-based stream
 from a triple32 hash; the seed is itself hashed, so runs with consecutive
@@ -44,8 +54,10 @@ the CPU for few chains and CUDA for many chains, since a GPU does not help
 a single chain. Default \code{"cpu"}.}
 }
 \value{
-An object of class \code{gpum_fit}: a list with \code{draws} (an \code{n_iter} by
-\code{n_chains} by \code{n_params} array), \code{accept_rate} and the run metadata.
+An object of class \code{gpum_fit}: a list with \code{draws} (an
+\code{n_iter - warmup} by \code{n_chains} by \code{n_params} array of post-warmup
+samples), \code{accept_rate}, \code{n_iter} (kept count), \code{n_iter_total} (raw
+count), \code{warmup} and the rest of the run metadata.
 }
 \description{
 Advances many independent random-walk Metropolis chains over a model
