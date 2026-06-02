@@ -36,14 +36,24 @@ install.packages("gpumetropolis",
                            "https://cloud.r-project.org"))
 ```
 
-The default build is CPU only. The CUDA and Vulkan GPU backends are optional
-Cargo features; building them needs the corresponding toolkit (the CUDA
-toolkit, or a Vulkan loader). To install from source with a GPU backend:
+A source install detects the GPU toolchains present on the build host and
+enables the matching backends without the user passing any flag. The CUDA
+backend is added when `nvcc` is on `PATH`; the Vulkan backend, when
+`vulkaninfo` is on `PATH`. Hosts with no GPU toolchain build CPU-only.
+
+The pre-built binaries on R-universe are CPU-only because the build runners
+have no GPU toolkits installed; to obtain a GPU-enabled binary, install from
+source on a host that has the toolkit:
 
 ``` r
-# install.packages("remotes")
-remotes::install_github("pcbrom/gpumetropolis")  # then build with the feature
+install.packages("gpumetropolis", type = "source",
+                 repos = c("https://pcbrom.r-universe.dev",
+                           "https://cloud.r-project.org"))
 ```
+
+The auto-detection can be overridden with `GPUMETROPOLIS_BACKENDS` (`auto`,
+`cpu`, `cuda`, `vulkan`, or a comma list) and the per-backend toggles
+`GPUMETROPOLIS_CUDA` and `GPUMETROPOLIS_VULKAN` (`0` or `1`).
 
 ## Load package
 

@@ -1,3 +1,14 @@
+# gpumetropolis 0.1.1
+
+- Auto-detect GPU backends at install time. The `configure` step probes the
+  build host for the CUDA toolkit (`nvcc`) and the Vulkan tools
+  (`vulkaninfo`) and adds the matching Cargo features to the build, so a
+  source install on a machine with the toolchains present produces a binary
+  that exposes the GPU backends without the user passing any flag. Hosts
+  with no GPU toolchain build CPU-only, unchanged. Override with the
+  `GPUMETROPOLIS_BACKENDS`, `GPUMETROPOLIS_CUDA` and `GPUMETROPOLIS_VULKAN`
+  environment variables.
+
 # gpumetropolis 0.1.0
 
 First release. The package is distributed through R-universe as a focused

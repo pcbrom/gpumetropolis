@@ -70,6 +70,64 @@ cfg <- if (is_debug) "debug" else "release"
   ""
 )
 
+# Detect GPU backends available at install time. The package builds CPU by
+# default and adds Cargo features for any GPU backend whose toolchain is
+# present on PATH, so a source install on a machine with CUDA or Vulkan
+# tooling produces a binary that exposes the matching backends without the
+# user passing any flag. Optional env-var overrides for CI or diagnosis:
+#   GPUMETROPOLIS_BACKENDS = auto|cpu|cuda|vulkan|cuda,vulkan
+#     auto (or unset) runs detection; any other value forces the set.
+#   GPUMETROPOLIS_CUDA   = 0|1   forces a single backend after auto.
+#   GPUMETROPOLIS_VULKAN = 0|1
+parse_backends_spec <- function(spec) {
+  parts <- unlist(strsplit(spec, "[, ]+"))
+  parts <- tolower(trimws(parts[nzchar(parts)]))
+  unique(parts[parts != "cpu"])
+}
+
+force_backend_flag <- function(current, value, name) {
+  if (!nzchar(value)) return(current)
+  v <- tolower(value)
+  if (v %in% c("0", "false", "no",  "off")) return(setdiff(current, name))
+  if (v %in% c("1", "true",  "yes", "on"))  return(union(current,   name))
+  current
+}
+
+env_backends <- Sys.getenv("GPUMETROPOLIS_BACKENDS", unset = "")
+env_cuda     <- Sys.getenv("GPUMETROPOLIS_CUDA",     unset = "")
+env_vulkan   <- Sys.getenv("GPUMETROPOLIS_VULKAN",   unset = "")
+
+if (nzchar(env_backends) && tolower(env_backends) != "auto") {
+  selected_backends <- parse_backends_spec(env_backends)
+} else {
+  selected_backends <- character()
+  if (nzchar(Sys.which("nvcc")))       selected_backends <- c(selected_backends, "cuda")
+  if (nzchar(Sys.which("vulkaninfo"))) selected_backends <- c(selected_backends, "vulkan")
+}
+
+selected_backends <- force_backend_flag(selected_backends, env_cuda,   "cuda")
+selected_backends <- force_backend_flag(selected_backends, env_vulkan, "vulkan")
+
+# WebAssembly target cannot pull in the CUDA or Vulkan crates.
+if (is_wasm) selected_backends <- character()
+
+selected_backends <- intersect(selected_backends, c("cuda", "vulkan"))
+
+overridden <- nzchar(env_backends) || nzchar(env_cuda) || nzchar(env_vulkan)
+
+if (length(selected_backends) > 0) {
+  .cargo_features <- paste("--features", paste(selected_backends, collapse = ","))
+  message("gpumetropolis: building backends = ",
+          paste(c("cpu", selected_backends), collapse = ", "), ".")
+} else if (overridden) {
+  .cargo_features <- ""
+  message("gpumetropolis: building CPU only (override).")
+} else {
+  .cargo_features <- ""
+  message("gpumetropolis: building CPU only (no GPU toolchain detected). ",
+          "Set GPUMETROPOLIS_BACKENDS to override.")
+}
+
 # read in the Makevars.in file checking
 is_windows <- .Platform[["OS.type"]] == "windows"
 
@@ -98,6 +156,7 @@ mv_txt <- readLines(mv_fp)
 
 # replace placeholder values
 new_txt <- gsub("@CRAN_FLAGS@", .cran_flags, mv_txt) |>
+  gsub("@CARGO_FEATURES@", .cargo_features, x = _) |>
   gsub("@PROFILE@", .profile, x = _) |>
   gsub("@CLEAN_TARGET@", .clean_targets, x = _) |>
   gsub("@LIBDIR@", .libdir, x = _) |>
