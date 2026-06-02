@@ -96,9 +96,11 @@ print.gpum_model <- function(x, ...) {
 #' @param init Optional numeric matrix of starting values, `n_chains` rows by
 #'   one column per parameter. When supplied its row count sets the number of
 #'   chains. When `NULL`, chains start from independent standard normal draws.
-#' @param proposal_sd Standard deviation of the Gaussian random-walk proposal,
-#'   recycled to one value per parameter. Default 0.1; tune it to the scale of
-#'   the posterior.
+#' @param proposal_sd Initial scale of the Gaussian random-walk proposal.
+#'   Accepts a scalar (recycled to all parameters and chains), a length-
+#'   `n_params` vector (broadcast across chains) or an `n_chains` by
+#'   `n_params` matrix (one row per chain). When `adapt = TRUE`, this is
+#'   only the warmup seed and adaptation refines it per chain.
 #' @param n_iter Iterations the sampler runs per chain, counting warmup.
 #'   Default 2000.
 #' @param n_chains Number of chains. Used only when `init` is `NULL`.
@@ -107,9 +109,15 @@ print.gpum_model <- function(x, ...) {
 #'   convention of Stan and nimble. Must lie in `[0, n_iter)`. Default
 #'   `floor(n_iter / 2)`, so `fit$draws` is post-warmup and is suitable for
 #'   direct plotting. Set `warmup = 0` to keep every iteration, useful for
-#'   inspecting the burn-in trajectory in a trace plot. The 0.1.x warmup is
-#'   a plain trim; an adaptive warmup that also tunes the proposal during the
-#'   burn-in is planned for the next release.
+#'   inspecting the burn-in trajectory in a trace plot.
+#' @param adapt Whether to adapt the per-chain proposal scale during
+#'   warmup. When `TRUE` (default) and `warmup > 0`, the warmup runs in
+#'   batches; between batches, Welford updates the per-chain running
+#'   variance and Robbins-Monro updates the per-chain scalar toward the
+#'   asymptotic optimum acceptance (0.234 in `d >= 2`, 0.44 in `d = 1`;
+#'   Roberts-Gelman-Gilks 1997, Roberts-Rosenthal 2009). Adaptation stops
+#'   cleanly at the end of warmup, so the sampling phase is stationary.
+#'   Set `FALSE` to keep the trim-only warmup of 0.1.x.
 #' @param seed Integer seed. Each chain advances its own counter-based stream
 #'   from a triple32 hash; the seed is itself hashed, so runs with consecutive
 #'   integer seeds get independent streams.
@@ -136,7 +144,7 @@ print.gpum_model <- function(x, ...) {
 #' @export
 gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
                            n_iter = 2000L, n_chains = 4L, warmup = NULL,
-                           seed = 1L,
+                           adapt = TRUE, seed = 1L,
                            backend = c("auto", "cpu", "cuda", "vulkan")) {
   if (!inherits(model, "gpum_model")) {
     stop("`model` must be a gpum_model from gpum_model().", call. = FALSE)
@@ -245,12 +253,56 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
          call. = FALSE)
   }
 
-  res <- rust_gpu_metropolis(
-    model$loglik$code, model$loglik$consts, np,
-    as.numeric(data_flat), model$n_cols, n_obs,
-    model$prior$code, model$prior$consts,
-    as.numeric(t(init_mat)), proposal_sd_flat,
-    n_iter, as.numeric(seed), backend
+  rust_call <- function(init_flat, sd_flat, n_iter, seed) {
+    rust_gpu_metropolis(
+      model$loglik$code, model$loglik$consts, np,
+      as.numeric(data_flat), model$n_cols, n_obs,
+      model$prior$code, model$prior$consts,
+      init_flat, sd_flat,
+      as.integer(n_iter), as.numeric(seed), backend
+    )
+  }
+
+  if (isTRUE(adapt) && warmup > 0L) {
+    am <- .am_orchestrate_warmup(
+      rust_call = rust_call, np = np, n_chains = n_chains,
+      init_mat = init_mat, proposal_sd = proposal_sd_mat,
+      warmup = warmup, seed = as.numeric(seed)
+    )
+    sampling_iters <- n_iter - am$warmup_used
+    if (sampling_iters < 1L) sampling_iters <- 1L
+    res <- rust_call(
+      init_flat = as.numeric(t(am$final_init)),
+      sd_flat = as.numeric(t(am$final_proposal_sd)),
+      n_iter = sampling_iters,
+      seed = am$seed_next
+    )
+    draws <- array(
+      res$draws,
+      dim = c(res$n_iter, res$n_chains, res$n_params),
+      dimnames = list(NULL, NULL, model$params)
+    )
+    return(structure(
+      list(draws = draws, accept_rate = res$accept_rate, model = model,
+           n_iter = res$n_iter, n_iter_total = am$warmup_used + res$n_iter,
+           warmup = am$warmup_used, n_chains = res$n_chains,
+           n_params = res$n_params, backend = backend, seed = seed,
+           adaptation = list(
+             final_proposal_sd = am$final_proposal_sd,
+             final_scales = am$final_scales,
+             n_batches = am$n_batches,
+             batch_sizes = am$batch_sizes,
+             accept_history = am$accept_history
+           )),
+      class = "gpum_fit"
+    ))
+  }
+
+  res <- rust_call(
+    init_flat = as.numeric(t(init_mat)),
+    sd_flat = proposal_sd_flat,
+    n_iter = n_iter,
+    seed = as.numeric(seed)
   )
 
   draws <- array(
@@ -277,8 +329,9 @@ print.gpum_fit <- function(x, ...) {
   cat(sprintf("  parameters  : %s\n", paste(x$model$params, collapse = ", ")))
   cat(sprintf("  backend     : %s\n", x$backend))
   cat(sprintf("  chains      : %d\n", x$n_chains))
-  cat(sprintf("  iterations  : %d per chain (%d raw, %d warmup discarded)\n",
-              x$n_iter, x$n_iter_total, x$warmup))
+  mode <- if (!is.null(x$adaptation)) "adaptive" else "trim"
+  cat(sprintf("  iterations  : %d per chain (%d raw, %d %s warmup discarded)\n",
+              x$n_iter, x$n_iter_total, x$warmup, mode))
   cat(sprintf("  accept_rate : %.3f to %.3f\n",
               min(x$accept_rate), max(x$accept_rate)))
   for (j in seq_len(x$n_params)) {

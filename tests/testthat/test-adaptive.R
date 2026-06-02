@@ -76,3 +76,41 @@ test_that(".am_cholesky regularises a singular matrix without erroring", {
   recon <- L %*% t(L)
   expect_true(all(eigen(recon, symmetric = TRUE, only.values = TRUE)$values > 0))
 })
+
+test_that("adaptive warmup rescues a deliberately bad proposal_sd", {
+  set.seed(42)
+  y <- rnorm(500, mean = 5, sd = 1)
+  m <- gpum_model(~ -((y - mu)^2) / 2, params = "mu", data = "y")
+  # An absurdly tight proposal_sd would freeze a non-adaptive chain.
+  # Adaptation must inflate the scale during warmup and recover the mode.
+  fit_adapt <- gpu_metropolis(m, data = list(y = y), proposal_sd = 1e-4,
+                              n_iter = 2000, n_chains = 4, warmup = 1000,
+                              adapt = TRUE, seed = 1, backend = "cpu")
+  fit_off <- gpu_metropolis(m, data = list(y = y), proposal_sd = 1e-4,
+                            n_iter = 2000, n_chains = 4, warmup = 1000,
+                            adapt = FALSE, seed = 1, backend = "cpu")
+  expect_equal(mean(fit_adapt$draws[, , 1]), mean(y), tolerance = 0.1)
+  # The non-adaptive chain stays frozen near its initialisation, well away
+  # from the data mean of 5; the adapted chain reaches the posterior.
+  expect_gt(abs(mean(fit_off$draws[, , 1]) - mean(y)),
+            abs(mean(fit_adapt$draws[, , 1]) - mean(y)))
+  expect_false(is.null(fit_adapt$adaptation))
+  expect_null(fit_off$adaptation)
+})
+
+test_that("the fit object carries the adaptation book-keeping", {
+  set.seed(7)
+  y <- rnorm(300, mean = 0, sd = 1)
+  m <- gpum_model(~ -((y - mu)^2) / 2, params = "mu", data = "y")
+  fit <- gpu_metropolis(m, data = list(y = y), proposal_sd = 0.1,
+                       n_iter = 1000, n_chains = 4, warmup = 500,
+                       seed = 1, backend = "cpu")
+  ad <- fit$adaptation
+  expect_named(ad, c("final_proposal_sd", "final_scales", "n_batches",
+                     "batch_sizes", "accept_history"))
+  expect_equal(dim(ad$final_proposal_sd), c(4L, 1L))
+  expect_length(ad$final_scales, 4L)
+  expect_equal(sum(ad$batch_sizes), 500L)        # warmup ran in full
+  expect_equal(dim(ad$accept_history), c(4L, ad$n_batches))
+  expect_true(all(is.finite(ad$accept_history)))
+})

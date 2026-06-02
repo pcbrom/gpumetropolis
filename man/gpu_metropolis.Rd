@@ -12,6 +12,7 @@ gpu_metropolis(
   n_iter = 2000L,
   n_chains = 4L,
   warmup = NULL,
+  adapt = TRUE,
   seed = 1L,
   backend = c("auto", "cpu", "cuda", "vulkan")
 )
@@ -26,9 +27,11 @@ in the model. Ignored for a model with no data term.}
 one column per parameter. When supplied its row count sets the number of
 chains. When \code{NULL}, chains start from independent standard normal draws.}
 
-\item{proposal_sd}{Standard deviation of the Gaussian random-walk proposal,
-recycled to one value per parameter. Default 0.1; tune it to the scale of
-the posterior.}
+\item{proposal_sd}{Initial scale of the Gaussian random-walk proposal.
+Accepts a scalar (recycled to all parameters and chains), a length-
+\code{n_params} vector (broadcast across chains) or an \code{n_chains} by
+\code{n_params} matrix (one row per chain). When \code{adapt = TRUE}, this is
+only the warmup seed and adaptation refines it per chain.}
 
 \item{n_iter}{Iterations the sampler runs per chain, counting warmup.
 Default 2000.}
@@ -40,9 +43,16 @@ Default 4.}
 convention of Stan and nimble. Must lie in \verb{[0, n_iter)}. Default
 \code{floor(n_iter / 2)}, so \code{fit$draws} is post-warmup and is suitable for
 direct plotting. Set \code{warmup = 0} to keep every iteration, useful for
-inspecting the burn-in trajectory in a trace plot. The 0.1.x warmup is
-a plain trim; an adaptive warmup that also tunes the proposal during the
-burn-in is planned for the next release.}
+inspecting the burn-in trajectory in a trace plot.}
+
+\item{adapt}{Whether to adapt the per-chain proposal scale during
+warmup. When \code{TRUE} (default) and \code{warmup > 0}, the warmup runs in
+batches; between batches, Welford updates the per-chain running
+variance and Robbins-Monro updates the per-chain scalar toward the
+asymptotic optimum acceptance (0.234 in \code{d >= 2}, 0.44 in \code{d = 1};
+Roberts-Gelman-Gilks 1997, Roberts-Rosenthal 2009). Adaptation stops
+cleanly at the end of warmup, so the sampling phase is stationary.
+Set \code{FALSE} to keep the trim-only warmup of 0.1.x.}
 
 \item{seed}{Integer seed. Each chain advances its own counter-based stream
 from a triple32 hash; the seed is itself hashed, so runs with consecutive
