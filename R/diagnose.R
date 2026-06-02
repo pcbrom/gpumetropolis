@@ -165,7 +165,15 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
                       main = "Running mean")
 
     ac <- stats::acf(v, lag.max = 50L, plot = FALSE)
-    plot(ac, main = "ACF (pooled)", xlab = "lag", ylab = "ACF")
+    lags <- as.numeric(ac$lag)
+    vals <- as.numeric(ac$acf)
+    ci <- 1.96 / sqrt(ac$n.used)
+    plot(lags, vals, type = "h", lwd = 1.5,
+         xlab = "lag", ylab = "ACF",
+         main = "ACF (pooled)",
+         ylim = c(min(0, min(vals, na.rm = TRUE)), 1))
+    graphics::abline(h = 0, col = "grey50")
+    graphics::abline(h = c(-ci, ci), col = "blue", lty = 2)
   }
 
   if (has_adapt) {
