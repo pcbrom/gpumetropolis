@@ -27,8 +27,10 @@
 #'
 #' @return When `return_data = TRUE`, a list with `summary` (one row
 #'   per parameter), `verdict` (the convergence diagnosis and a
-#'   suggested next step) and `adaptation` (passed through from
-#'   `fit$adaptation`). Otherwise `NULL` invisibly.
+#'   suggested next step), `adaptation` (passed through from
+#'   `fit$adaptation`) and `adaptation_hint` (a character string when
+#'   the last warmup batch closed below 80% of the asymptotic target
+#'   acceptance, `NULL` otherwise). Otherwise `NULL` invisibly.
 #'
 #' @seealso [gpu_metropolis()], [rhat()], [ess()]
 #' @export
@@ -76,6 +78,29 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
                  "Increase warmup or revise the initialisation.")
   }
 
+  # Adaptation hint, only when the fit carries adaptation book-keeping
+  # and the last-batch acceptance per chain is still below 80% of the
+  # asymptotic target. Robbins-Monro converges slowly by design (gamma_t
+  # = t^{-2/3}), so a short warmup leaves the chain still climbing at
+  # the warmup boundary. Doubling the warmup is the canonical knob.
+  adaptation_hint <- NULL
+  if (!is.null(fit$adaptation)) {
+    ah <- fit$adaptation$accept_history
+    if (is.matrix(ah) && ncol(ah) >= 1L) {
+      target <- if (np == 1L) 0.44 else 0.234
+      last_mean <- mean(ah[, ncol(ah)], na.rm = TRUE)
+      if (is.finite(last_mean) && last_mean < 0.8 * target) {
+        adaptation_hint <- sprintf(
+          paste0("Adaptation still climbing at end of warmup ",
+                 "(last-batch accept %.2f, target %.2f). ",
+                 "Consider warmup = %d to let the per-chain scale ",
+                 "plateau."),
+          last_mean, target, 2L * fit$warmup
+        )
+      }
+    }
+  }
+
   cat(sprintf("<gpum_diagnose: %s>\n", verdict[1L]))
   cat(sprintf("  backend %s, chains %d, iterations %d (warmup %d, %s)\n",
               fit$backend, fit$n_chains, fit$n_iter, fit$warmup,
@@ -83,6 +108,9 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
   cat("\n")
   print(format(summary, digits = 4, nsmall = 4), row.names = FALSE)
   cat("\n  ", verdict[2L], "\n", sep = "")
+  if (!is.null(adaptation_hint)) {
+    cat("  Hint: ", adaptation_hint, "\n", sep = "")
+  }
 
   if (isTRUE(plot)) {
     .gpum_diagnose_plot(fit, params)
@@ -90,7 +118,8 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
 
   if (isTRUE(return_data)) {
     invisible(list(summary = summary, verdict = verdict,
-                   adaptation = fit$adaptation))
+                   adaptation = fit$adaptation,
+                   adaptation_hint = adaptation_hint))
   } else {
     invisible(NULL)
   }

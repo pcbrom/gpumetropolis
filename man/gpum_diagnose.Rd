@@ -17,8 +17,10 @@ Default \code{FALSE}; the function then returns \code{NULL} invisibly.}
 \value{
 When \code{return_data = TRUE}, a list with \code{summary} (one row
 per parameter), \code{verdict} (the convergence diagnosis and a
-suggested next step) and \code{adaptation} (passed through from
-\code{fit$adaptation}). Otherwise \code{NULL} invisibly.
+suggested next step), \code{adaptation} (passed through from
+\code{fit$adaptation}) and \code{adaptation_hint} (a character string when
+the last warmup batch closed below 80\% of the asymptotic target
+acceptance, \code{NULL} otherwise). Otherwise \code{NULL} invisibly.
 }
 \description{
 Produces a per-parameter table (mean, standard deviation, 2.5\%, 50\%
