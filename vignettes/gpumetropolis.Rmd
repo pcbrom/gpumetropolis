@@ -73,8 +73,12 @@ fit
 
 The printed summary reports the acceptance rate and the posterior mean and
 standard deviation of each parameter. The first half of the iterations is
-discarded as warmup before `fit$draws` is returned; setting `warmup = 0`
-keeps every iteration for inspecting the burn-in trajectory.
+discarded as warmup before `fit$draws` is returned; under the default
+`adapt = TRUE`, that warmup is adaptive: the kernel runs in batches and the
+per-chain proposal scale moves toward the asymptotic optimum acceptance, so
+`proposal_sd` is only the seed of the warmup and not a knob to sintonise.
+Setting `warmup = 0` keeps every iteration for inspecting the burn-in
+trajectory; `adapt = FALSE` falls back to the trim-only warmup of 0.1.x.
 
 ## The fit object
 
@@ -100,10 +104,23 @@ c(sampler_sd = sd(as.vector(mu_draws)), exact_sd = truth$sd)
 
 ## Convergence diagnostics
 
-The package computes the split R-hat statistic and the effective sample size.
-Both accept the post-warmup `n_iter` by `n_chains` matrix of one parameter's
-draws. When the input is already post-warmup, pass `warmup = 0` to keep all
-the rows for the diagnostic.
+`gpum_diagnose(fit)` is the one-call diagnostic: a per-parameter table with
+mean, standard deviation, the 2.5%, 50% and 97.5% quantiles, the split R-hat,
+the effective sample size and the Monte Carlo standard error, plus a
+convergence verdict from the canonical thresholds (R-hat below 1.01 and ESS at
+or above 400 in every parameter; Vehtari et al. 2021). When `plot = TRUE`,
+opens a multi-panel plot per parameter (trace, pooled density, running mean,
+pooled ACF) and, when the warmup was adaptive, an extra row showing the
+per-chain acceptance rate by warmup batch with the asymptotic optimum as a
+reference.
+
+```{r gpum-diagnose, fig.width = 8, fig.height = 6}
+gpum_diagnose(fit)
+```
+
+The individual building blocks are also exported. They accept the post-warmup
+`n_iter` by `n_chains` matrix of one parameter's draws; when the input is
+already post-warmup, pass `warmup = 0` to keep all rows for the diagnostic.
 
 ```{r diagnostics}
 rhat(mu_draws, warmup = 0)   # split potential scale reduction factor, near 1 at convergence
