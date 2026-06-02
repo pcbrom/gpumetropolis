@@ -1,17 +1,30 @@
-# gpumetropolis 0.2.0 (in development)
+# gpumetropolis 0.2.0
 
-- `gpu_metropolis(backend = "auto")` is now the default. The selector
+- **`gpu_metropolis(backend = "auto")` is now the default.** The selector
   picks `"cuda"` when its feature is compiled in, then `"vulkan"`, and
   falls back to `"cpu"` with a one-shot per-session notice pointing at
   the source-install recipe.
-- *(in development)* Adaptive Metropolis warmup: the proposal scales
-  (and, for `d > 1`, the proposal covariance) adapt during the warmup
-  phase, so `proposal_sd` is no longer a tuning parameter. Adaptation
-  stops cleanly at the end of warmup to keep ergodicity trivial.
-- *(in development)* `gpum_diagnose(fit)`: one-call diagnostic that
-  prints a per-parameter table (mean, sd, quantiles, R-hat, ESS, MCSE)
-  with a convergence verdict, and opens a multi-panel plot (trace,
-  density, running mean, ACF, acceptance over warmup).
+- **Adaptive warmup, on by default.** When `adapt = TRUE` and `warmup
+  > 0`, the warmup runs in batches; between batches, Welford updates the
+  per-chain running variance per dimension while Robbins-Monro updates
+  a per-chain scalar toward the asymptotic optimum acceptance (0.234 in
+  `d >= 2`, 0.44 in `d = 1`; Roberts-Gelman-Gilks 1997). Adaptation
+  stops cleanly at the warmup boundary, so the sampling phase is
+  stationary. `proposal_sd` becomes a seed for the warmup rather than a
+  knob to sintonise; `adapt = FALSE` keeps the trim-only warmup of
+  0.1.x. `proposal_sd` also accepts an `n_chains` by `n_params` matrix
+  for the explicit per-chain initialisation.
+- **`gpum_diagnose(fit)`: one-call diagnostic.** Prints a per-parameter
+  table (mean, sd, 2.5%, 50%, 97.5% quantiles, split R-hat, ESS, MCSE)
+  and a convergence verdict from the canonical thresholds (R-hat < 1.01
+  and ESS >= 400). When `plot = TRUE`, opens a multi-panel plot per
+  parameter (trace, pooled density, running mean per chain, pooled
+  ACF), plus, when the fit is adaptive, an extra row showing the
+  acceptance rate per chain by warmup batch with the asymptotic
+  optimum as a reference.
+- The fit object now carries `fit$adaptation` when the warmup was
+  adaptive, with `final_proposal_sd`, `final_scales`, `n_batches`,
+  `batch_sizes` and `accept_history`.
 
 # gpumetropolis 0.1.3
 
