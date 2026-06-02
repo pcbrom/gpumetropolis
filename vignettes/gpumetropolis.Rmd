@@ -166,8 +166,9 @@ fit2 <- gpu_metropolis(
   proposal_sd = c(0.03, 0.02), n_iter = 4000, seed = 3, backend = "cpu"
 )
 
-post2 <- fit2$draws[2001:4000, , ]
-c(mu = mean(post2[, , "mu"]), ls = mean(post2[, , "ls"]), log_sd_true = log(1.5))
+c(mu = mean(fit2$draws[, , "mu"]),
+  ls = mean(fit2$draws[, , "ls"]),
+  log_sd_true = log(1.5))
 ```
 
 ## When the GPU helps
