@@ -114,9 +114,10 @@ print.gpum_model <- function(x, ...) {
 #'   from a triple32 hash; the seed is itself hashed, so runs with consecutive
 #'   integer seeds get independent streams.
 #' @param backend Compute backend: `"cpu"`, `"cuda"` (NVIDIA-native),
-#'   `"vulkan"` (vendor-agnostic, through wgpu), or `"auto"`. `"auto"` picks
-#'   the CPU for few chains and CUDA for many chains, since a GPU does not help
-#'   a single chain. Default `"cpu"`.
+#'   `"vulkan"` (vendor-agnostic, through wgpu), or `"auto"`. `"auto"`
+#'   selects `"cuda"` when its feature was compiled into the build, then
+#'   `"vulkan"`, and falls back to `"cpu"` with a one-shot per-session
+#'   message stating that no GPU backend is available. Default `"auto"`.
 #'
 #' @return An object of class `gpum_fit`: a list with `draws` (an
 #'   `n_iter - warmup` by `n_chains` by `n_params` array of post-warmup
@@ -136,7 +137,7 @@ print.gpum_model <- function(x, ...) {
 gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
                            n_iter = 2000L, n_chains = 4L, warmup = NULL,
                            seed = 1L,
-                           backend = c("cpu", "cuda", "vulkan", "auto")) {
+                           backend = c("auto", "cpu", "cuda", "vulkan")) {
   if (!inherits(model, "gpum_model")) {
     stop("`model` must be a gpum_model from gpum_model().", call. = FALSE)
   }
@@ -207,12 +208,18 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
   # GPU backend was compiled into this build.
   avail <- rust_available_backends()
   if (identical(backend, "auto")) {
-    backend <- if (n_chains >= 32L && "cuda" %in% avail) {
-      "cuda"
-    } else if (n_chains >= 32L && "vulkan" %in% avail) {
-      "vulkan"
+    if ("cuda" %in% avail) {
+      backend <- "cuda"
+    } else if ("vulkan" %in% avail) {
+      backend <- "vulkan"
     } else {
-      "cpu"
+      backend <- "cpu"
+      if (!isTRUE(.gpum_env$auto_cpu_warned)) {
+        .gpum_env$auto_cpu_warned <- TRUE
+        message("gpumetropolis: no GPU backend in this build, using CPU. ",
+                "Install from source with `nvcc` or `vulkaninfo` on PATH ",
+                "to enable a GPU backend.")
+      }
     }
   } else if (!(backend %in% avail)) {
     stop("backend '", backend, "' is not available in this build. ",

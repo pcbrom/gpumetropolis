@@ -4,6 +4,11 @@
 # silent on any failure (offline, DNS, parse error) so a missing network
 # never blocks library() or prints a confusing diagnostic.
 
+# Package-level environment for one-shot session state, such as the
+# warn-once flag of the auto-backend CPU fallback.
+.gpum_env <- new.env(parent = emptyenv())
+.gpum_env$auto_cpu_warned <- FALSE
+
 .onAttach <- function(libname, pkgname) {
   if (!interactive()) return(invisible(NULL))
   if (nzchar(Sys.getenv("GPUMETROPOLIS_NO_VERSION_CHECK"))) {
