@@ -16,7 +16,7 @@ test_that("the sampler covers a bimodal posterior with many chains", {
   fit <- gpu_metropolis(m, data = list(y = y), init = init,
                         proposal_sd = 0.15, n_iter = 4000, seed = 1,
                         backend = "cpu")
-  pooled <- as.vector(fit$draws[2001:4000, , 1])
+  pooled <- as.vector(fit$draws[, , 1])
   # Both modes are represented in the pooled draws.
   expect_true(any(pooled > 1.5))
   expect_true(any(pooled < -1.5))
@@ -36,8 +36,7 @@ test_that("the sampler recovers the location of a heavy-tailed model", {
   fit <- gpu_metropolis(m, data = list(y = y), proposal_sd = 0.08,
                         n_iter = 4000, n_chains = 6, seed = 2,
                         backend = "cpu")
-  post <- fit$draws[2001:4000, , 1]
-  expect_equal(mean(post), 5, tolerance = 0.25)
+  expect_equal(mean(fit$draws[, , 1]), 5, tolerance = 0.25)
   expect_lt(rhat(fit$draws[, , 1]), 1.05)
 })
 
@@ -53,9 +52,7 @@ test_that("the sampler recovers a two-parameter model", {
   fit <- gpu_metropolis(m, data = list(y = y), init = init,
                         proposal_sd = c(0.03, 0.02), n_iter = 5000,
                         seed = 3, backend = "cpu")
-  expect_equal(dim(fit$draws), c(5000L, 6L, 2L))
-  mu_post <- fit$draws[2501:5000, , "mu"]
-  ls_post <- fit$draws[2501:5000, , "ls"]
-  expect_equal(mean(mu_post), 2, tolerance = 0.1)
-  expect_equal(mean(ls_post), log(1.5), tolerance = 0.1)
+  expect_equal(dim(fit$draws), c(2500L, 6L, 2L))
+  expect_equal(mean(fit$draws[, , "mu"]), 2, tolerance = 0.1)
+  expect_equal(mean(fit$draws[, , "ls"]), log(1.5), tolerance = 0.1)
 })

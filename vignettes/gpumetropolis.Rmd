@@ -72,17 +72,20 @@ fit
 ```
 
 The printed summary reports the acceptance rate and the posterior mean and
-standard deviation of each parameter, computed after discarding the first half
-of the iterations as warmup.
+standard deviation of each parameter. The first half of the iterations is
+discarded as warmup before `fit$draws` is returned; setting `warmup = 0`
+keeps every iteration for inspecting the burn-in trajectory.
 
 ## The fit object
 
-The draws are in `fit$draws`, an array of `n_iter` by `n_chains` by
-`n_params`, with the parameters named on the third dimension.
+The draws are in `fit$draws`, an array of `n_iter - warmup` by `n_chains` by
+`n_params`, with the parameters named on the third dimension. The raw count,
+the warmup count and the kept count are recorded as `fit$n_iter_total`,
+`fit$warmup` and `fit$n_iter`.
 
 ```{r draws}
 dim(fit$draws)
-mu_draws <- fit$draws[, , "mu"]   # iterations by chains
+mu_draws <- fit$draws[, , "mu"]   # iterations (post-warmup) by chains
 ```
 
 The closed-form posterior of this model is available through
@@ -91,19 +94,20 @@ answer.
 
 ```{r truth}
 truth <- gaussian_mean_posterior(y, sigma = 2)
-post <- mu_draws[1001:2000, ]     # post-warmup draws
-c(sampler_mean = mean(post), exact_mean = truth$mean)
-c(sampler_sd = sd(as.vector(post)), exact_sd = truth$sd)
+c(sampler_mean = mean(mu_draws), exact_mean = truth$mean)
+c(sampler_sd = sd(as.vector(mu_draws)), exact_sd = truth$sd)
 ```
 
 ## Convergence diagnostics
 
 The package computes the split R-hat statistic and the effective sample size.
-Both accept the `n_iter` by `n_chains` matrix of one parameter's draws.
+Both accept the post-warmup `n_iter` by `n_chains` matrix of one parameter's
+draws. When the input is already post-warmup, pass `warmup = 0` to keep all
+the rows for the diagnostic.
 
 ```{r diagnostics}
-rhat(mu_draws)   # split potential scale reduction factor, near 1 at convergence
-ess(mu_draws)    # effective sample size, summed over chains
+rhat(mu_draws, warmup = 0)   # split potential scale reduction factor, near 1 at convergence
+ess(mu_draws, warmup = 0)    # effective sample size, summed over chains
 ```
 
 R-hat near 1 indicates the chains have mixed; the effective sample size

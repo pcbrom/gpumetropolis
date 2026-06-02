@@ -99,9 +99,17 @@ print.gpum_model <- function(x, ...) {
 #' @param proposal_sd Standard deviation of the Gaussian random-walk proposal,
 #'   recycled to one value per parameter. Default 0.1; tune it to the scale of
 #'   the posterior.
-#' @param n_iter Iterations recorded per chain. Default 2000.
+#' @param n_iter Iterations the sampler runs per chain, counting warmup.
+#'   Default 2000.
 #' @param n_chains Number of chains. Used only when `init` is `NULL`.
 #'   Default 4.
+#' @param warmup Warmup iterations to discard before returning, following the
+#'   convention of Stan and nimble. Must lie in `[0, n_iter)`. Default
+#'   `floor(n_iter / 2)`, so `fit$draws` is post-warmup and is suitable for
+#'   direct plotting. Set `warmup = 0` to keep every iteration, useful for
+#'   inspecting the burn-in trajectory in a trace plot. The 0.1.x warmup is
+#'   a plain trim; an adaptive warmup that also tunes the proposal during the
+#'   burn-in is planned for the next release.
 #' @param seed Integer seed. Each chain advances its own counter-based stream
 #'   from a triple32 hash; the seed is itself hashed, so runs with consecutive
 #'   integer seeds get independent streams.
@@ -110,8 +118,10 @@ print.gpum_model <- function(x, ...) {
 #'   the CPU for few chains and CUDA for many chains, since a GPU does not help
 #'   a single chain. Default `"cpu"`.
 #'
-#' @return An object of class `gpum_fit`: a list with `draws` (an `n_iter` by
-#'   `n_chains` by `n_params` array), `accept_rate` and the run metadata.
+#' @return An object of class `gpum_fit`: a list with `draws` (an
+#'   `n_iter - warmup` by `n_chains` by `n_params` array of post-warmup
+#'   samples), `accept_rate`, `n_iter` (kept count), `n_iter_total` (raw
+#'   count), `warmup` and the rest of the run metadata.
 #'
 #' @examples
 #' set.seed(1)
@@ -124,7 +134,8 @@ print.gpum_model <- function(x, ...) {
 #' @seealso [gpum_model()], [rhat()], [ess()]
 #' @export
 gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
-                           n_iter = 2000L, n_chains = 4L, seed = 1L,
+                           n_iter = 2000L, n_chains = 4L, warmup = NULL,
+                           seed = 1L,
                            backend = c("cpu", "cuda", "vulkan", "auto")) {
   if (!inherits(model, "gpum_model")) {
     stop("`model` must be a gpum_model from gpum_model().", call. = FALSE)
@@ -178,6 +189,14 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
     n_chains <- nrow(init_mat)
   }
   n_iter <- as.integer(n_iter)
+  if (is.null(warmup)) {
+    warmup <- n_iter %/% 2L
+  }
+  warmup <- as.integer(warmup)
+  if (is.na(warmup) || warmup < 0L || warmup >= n_iter) {
+    stop("`warmup` must be a non-negative integer strictly less than ",
+         "`n_iter`.", call. = FALSE)
+  }
   proposal_sd <- rep_len(as.numeric(proposal_sd), np)
   if (any(!is.finite(proposal_sd)) || any(proposal_sd <= 0)) {
     stop("`proposal_sd` must be positive and finite.", call. = FALSE)
@@ -215,10 +234,15 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
     dim = c(res$n_iter, res$n_chains, res$n_params),
     dimnames = list(NULL, NULL, model$params)
   )
+  kept <- res$n_iter - warmup
+  if (warmup > 0L) {
+    draws <- draws[seq.int(warmup + 1L, res$n_iter), , , drop = FALSE]
+  }
   structure(
     list(draws = draws, accept_rate = res$accept_rate, model = model,
-         n_iter = res$n_iter, n_chains = res$n_chains,
-         n_params = res$n_params, backend = backend, seed = seed),
+         n_iter = kept, n_iter_total = res$n_iter, warmup = warmup,
+         n_chains = res$n_chains, n_params = res$n_params,
+         backend = backend, seed = seed),
     class = "gpum_fit"
   )
 }
@@ -229,12 +253,12 @@ print.gpum_fit <- function(x, ...) {
   cat(sprintf("  parameters  : %s\n", paste(x$model$params, collapse = ", ")))
   cat(sprintf("  backend     : %s\n", x$backend))
   cat(sprintf("  chains      : %d\n", x$n_chains))
-  cat(sprintf("  iterations  : %d per chain\n", x$n_iter))
+  cat(sprintf("  iterations  : %d per chain (%d raw, %d warmup discarded)\n",
+              x$n_iter, x$n_iter_total, x$warmup))
   cat(sprintf("  accept_rate : %.3f to %.3f\n",
               min(x$accept_rate), max(x$accept_rate)))
-  half <- x$n_iter %/% 2L
   for (j in seq_len(x$n_params)) {
-    post <- x$draws[seq.int(half + 1L, x$n_iter), , j]
+    post <- x$draws[, , j]
     cat(sprintf("  %-11s : posterior mean %.4f (sd %.4f)\n",
                 x$model$params[j], mean(post), stats::sd(as.vector(post))))
   }

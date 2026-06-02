@@ -1,3 +1,15 @@
+# gpumetropolis 0.1.2
+
+- `gpu_metropolis()` now discards a warmup portion before returning. The
+  new `warmup` argument defaults to `floor(n_iter / 2)`, following the
+  convention of Stan and nimble, so `fit$draws` is post-warmup by default
+  and is suitable for direct plotting and posterior summaries. Set
+  `warmup = 0` to keep every iteration, useful for trace plots that show
+  the burn-in trajectory. The trim is plain; an adaptive warmup that also
+  tunes the proposal during the burn-in is the next release.
+- The `gpum_fit` object now carries `n_iter` (kept), `n_iter_total` (raw)
+  and `warmup` so the raw and discarded counts are recoverable.
+
 # gpumetropolis 0.1.1
 
 - Auto-detect GPU backends at install time. The `configure` step probes the

@@ -13,7 +13,7 @@ test_that("a proposal that makes the log-density non-finite is rejected", {
   expect_true(all(is.finite(draws)))
   # The chain stays in the valid region; the posterior mean of Gamma(2,1) is 2.
   expect_gt(min(draws), 0)
-  expect_equal(mean(draws[1501:3000]), 2, tolerance = 0.4)
+  expect_equal(mean(draws), 2, tolerance = 0.4)
 })
 
 test_that("a large argument to exp does not crash the sampler", {
@@ -35,5 +35,5 @@ test_that("a non-finite starting log-density does not crash the run", {
                         proposal_sd = 0.3, n_iter = 500, seed = 1,
                         backend = "cpu")
   expect_s3_class(fit, "gpum_fit")
-  expect_equal(dim(fit$draws), c(500L, 1L, 1L))
+  expect_equal(dim(fit$draws), c(250L, 1L, 1L))
 })

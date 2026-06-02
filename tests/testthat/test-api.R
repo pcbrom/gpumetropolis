@@ -20,9 +20,10 @@ test_that("gpu_metropolis recovers the Gaussian-mean posterior on the CPU", {
     proposal_sd = 0.06, n_iter = 3000, seed = 1, backend = "cpu"
   )
   expect_s3_class(fit, "gpum_fit")
-  expect_equal(dim(fit$draws), c(3000L, 4L, 1L))
-  post <- fit$draws[1501:3000, , 1]
-  expect_equal(mean(post), mean(y), tolerance = 0.03)
+  expect_equal(dim(fit$draws), c(1500L, 4L, 1L))
+  expect_equal(fit$n_iter_total, 3000L)
+  expect_equal(fit$warmup, 1500L)
+  expect_equal(mean(fit$draws[, , 1]), mean(y), tolerance = 0.03)
   expect_lt(rhat(fit$draws[, , 1]), 1.05)
 })
 
