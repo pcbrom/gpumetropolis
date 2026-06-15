@@ -79,14 +79,26 @@ model <- gpum_model(
   data = "y"
 )
 
-fit <- gpu_metropolis(model, data = list(y = y), proposal_sd = 0.05,
-                      n_iter = 3000, n_chains = 8, backend = "cpu")
+fit <- gpu_metropolis(model, data = list(y = y),
+                      n_iter = 3000, n_chains = 8)
 fit
 
-# the same declaration runs on the GPU
-fit_gpu <- gpu_metropolis(model, data = list(y = y), proposal_sd = 0.05,
+# the same declaration runs on a specific backend; the default
+# `backend = "auto"` picks CUDA when its feature is compiled in, then
+# Vulkan, and falls back to the CPU.
+fit_gpu <- gpu_metropolis(model, data = list(y = y),
                           n_iter = 3000, n_chains = 8, backend = "cuda")
+
+# parallel tempering for multimodal targets, since v0.3.0
+fit_pt <- gpu_metropolis(model, data = list(y = y),
+                         n_iter = 3000, n_chains = 8, method = "pt")
 ```
+
+Since v0.2.0 the warmup is adaptive by default and is discarded before
+`fit$draws` is returned; `proposal_sd` is only the warmup seed and the
+per-chain proposal scale adapts to its own geometry, so most users no
+longer need to tune it. Set `adapt = FALSE` to recover the trim-only
+warmup of 0.1.x.
 
 The supported operations in a formula are `+`, `-`, `*`, `/`, `^`, unary `-`,
 and `exp`, `log`, `sqrt`. A symbol that is not a declared parameter or data
@@ -95,13 +107,26 @@ clear error.
 
 ## Convergence diagnostics
 
-The package ships a distributional equivalence harness. Equivalence for MCMC is
+Since v0.2.0 the one-call entry point is `gpum_diagnose(fit)`: it prints a
+per-parameter table (mean, standard deviation, the 2.5%, 50% and 97.5%
+quantiles, split R-hat, effective sample size and Monte Carlo standard
+error) with a convergence verdict from the canonical thresholds, and opens
+a multi-panel diagnostic plot per parameter; when the warmup was adaptive
+an extra row shows the per-chain acceptance over the warmup batches with
+the asymptotic optimum as a reference, and on a parallel-tempering fit a
+further row shows the swap acceptance per pair.
+
+``` r
+gpum_diagnose(fit)
+```
+
+The individual building blocks are also exported. Equivalence for MCMC is
 distributional, never bit-exact, because the algorithm is stochastic.
 
 ``` r
 draws <- fit$draws[, , "mu"]   # iterations by chains
-rhat(draws)                    # split potential scale reduction factor
-ess(draws)                     # effective sample size, Geyer estimator
+rhat(draws, warmup = 0)        # split potential scale reduction factor
+ess(draws, warmup = 0)         # effective sample size, Geyer estimator
 
 # distributional equivalence between the CPU and GPU runs
 ks_equivalence(fit$draws[, , "mu"], fit_gpu$draws[, , "mu"])
@@ -134,17 +159,34 @@ The development follows a phased plan.
 - Phase 2, complete: the block-per-chain kernel with a shared-memory data
   reduction, and the native CPU backend.
 - Phase 3, factorial complete: the registered factorial over models M1 to M4
-  across the eight backends, summarised in the Benchmark section below. The
-  package is released through R-universe; see Installation above.
+  across the eight backends, summarised in the Benchmark section below.
+- Phase 4 (v0.2.0): backend selection defaults to `"auto"`, the warmup
+  adapts per chain through Welford and Robbins-Monro, and `gpum_diagnose()`
+  becomes the one-call diagnostic. `proposal_sd` is no longer a tuning
+  parameter; it is only the warmup seed.
+- Phase 5 (v0.3.0): parallel tempering, `method = "pt"`. Each chain runs at
+  its own temperature on the same target; between batches a swap step
+  shuttles states between the cold chain and the hot ones. The focused
+  re-run of model M2 is recorded as amendment v0.9 of
+  [`EXPERIMENT_PROTOCOL.md`](https://github.com/pcbrom/gpumetropolis/blob/main/EXPERIMENT_PROTOCOL.md)
+  and as the vignette
+  [`m2_parallel_tempering`](https://github.com/pcbrom/gpumetropolis/blob/main/vignettes/m2_parallel_tempering.Rmd).
+
+The package is released through R-universe; see Installation above.
 
 ## Roadmap
 
-The direction beyond the first release is recorded, tiered, in
-[`ROADMAP.md`](https://github.com/pcbrom/gpumetropolis/blob/main/ROADMAP.md):
-the in-scope Metropolis-Hastings-family next steps (adaptive Metropolis,
-differential evolution MCMC, parallel tempering), the optimisation layers, and
-the larger directions. The long arc is a portable probabilistic computing
-runtime; the current package is its foundation.
+The direction beyond the current release is recorded, tiered, in
+[`ROADMAP.md`](https://github.com/pcbrom/gpumetropolis/blob/main/ROADMAP.md).
+The in-scope Metropolis-Hastings-family next step is Differential Evolution
+MCMC (v0.4.0, target 2026-06-29), followed by the application trajectory of
+bivariate copula workflow (v0.5.0), per-column marginal auto-selection
+(v0.6.0), vine copula for higher dimension (v0.7.0) and synthesis
+(v0.8.0). The distribution catalogue that drives the marginal auto-selection
+is specified in
+[`CATALOG_DESIGN.md`](https://github.com/pcbrom/gpumetropolis/blob/main/CATALOG_DESIGN.md).
+The long arc is a portable probabilistic computing runtime built around
+MCMC-driven copula synthesis; the current package is its foundation.
 
 ## Benchmark
 
