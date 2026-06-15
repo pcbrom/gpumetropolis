@@ -28,7 +28,9 @@ Depends:
 Suggests:
     testthat (>= 3.0.0),
     knitr,
-    rmarkdown
+    rmarkdown,
+    evd,
+    diptest
 Config/testthat/edition: 3
 VignetteBuilder: knitr
 URL: https://github.com/pcbrom/gpumetropolis

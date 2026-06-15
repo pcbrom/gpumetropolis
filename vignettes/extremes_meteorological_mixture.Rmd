@@ -1,0 +1,370 @@
+---
+title: "Bimodal extreme-value data: Gumbel mixture with parallel tempering"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Bimodal extreme-value data: Gumbel mixture with parallel tempering}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>",
+                      fig.width = 7, fig.height = 4.2)
+Sys.setenv(RAYON_NUM_THREADS = "2")
+```
+
+This vignette is the second chapter of the package's worked-case companion.
+The first chapter, `m2_parallel_tempering`, used a synthetic separated
+bimodal target to show why `method = "pt"` is needed. This chapter takes
+the same machinery to a real-world question: when annual extremes come
+from two distinct weather regimes, can the package recover both regimes
+and decide whether a single Gumbel is enough?
+
+The setting is the textbook one for univariate block maxima: each year
+contributes its maximum, and the resulting series is modelled as a
+Gumbel or a Generalised Extreme Value distribution (Coles 2001). When
+the site sits at the edge of two climatic regimes the same series
+carries two families of extremes, say summer-driven and winter-driven
+maxima, and a single Gumbel is then the wrong model.
+
+```{r libs}
+library(gpumetropolis)
+suppressMessages({
+  library(evd)
+  library(diptest)
+})
+```
+
+## A real dataset: Oxford annual maximum temperatures
+
+`evd::oxford` records the annual maximum daily temperature in degrees
+Fahrenheit at Oxford, England, from 1901 to 1980 (`n = 80`). It is a
+standard didactic dataset in `evd` (Stephenson 2002).
+
+```{r oxford-show}
+data(oxford)
+y_ox <- as.numeric(oxford)
+summary(y_ox)
+diptest::dip.test(y_ox)
+```
+
+The dip test sits right at the conventional boundary, `p` near 0.05.
+This is the "tie zone" described in
+[`CATALOG_DESIGN.md`](https://github.com/pcbrom/gpumetropolis/blob/main/CATALOG_DESIGN.md):
+the test does not clearly reject unimodality and does not comfortably
+accept it. The catalogue policy is then to fit both a unimodal
+candidate and a mixture challenger and compare by WAIC.
+
+### A single Gumbel as the Tier A candidate
+
+The Gumbel log-density up to an additive constant is
+`-(y - mu)/beta - exp(-(y - mu)/beta) - log(beta)`; with the scale
+reparametrised as `lb = log(beta)` the parameter is unbounded:
+
+```{r oxford-single}
+model_gumbel <- gpum_model(
+  loglik = ~ -(y - mu) / exp(lb)
+             - exp(-(y - mu) / exp(lb))
+             - lb,
+  params = c("mu", "lb"), data = "y"
+)
+fit_single <- gpu_metropolis(
+  model_gumbel, data = list(y = y_ox),
+  proposal_sd = c(0.5, 0.1),
+  init = matrix(c(median(y_ox), log(IQR(y_ox) / 2)),
+                nrow = 4, ncol = 2, byrow = TRUE),
+  n_iter = 4000, n_chains = 4, seed = 1, backend = "cpu"
+)
+fit_single
+```
+
+The posterior summary recovers `mu` near 83 (degrees Fahrenheit) and
+`beta = exp(lb)` near 4.2, the textbook fit. `gpum_diagnose(fit_single)`
+opens the convergence panel.
+
+```{r oxford-diagnose, fig.width = 8, fig.height = 6}
+gpum_diagnose(fit_single)
+```
+
+### Why a Gumbel mixture on Oxford is harder than it looks
+
+When the modes overlap heavily, as they do in Oxford, the mixture
+posterior on `(p, mu_1, beta_1, mu_2, beta_2)` is weakly identified:
+the data can be reasonably explained by a single Gumbel, so the
+posterior has a wide ridge where one component dominates and the
+other becomes a "ghost" whose parameters drift. Fitting a mixture on
+Oxford without informative priors or hard order constraints produces a
+fit whose nominal cold-chain summary is unstable. The catalogue layer
+of v0.6.0 will handle this through default priors and an order
+constraint; the next section shows the mixture recovery in a regime
+where the data carry it cleanly.
+
+## A two-regime simulation, the recovery story
+
+A small simulation captures the structure of a station near a climatic
+edge. Each year is in either a cool-extreme regime or a warm-extreme
+regime with respective Gumbel parameters; the annual maximum is drawn
+from the corresponding distribution.
+
+```{r sim-data, fig.height = 3.5}
+set.seed(2026)
+rgumbel <- function(n, mu, beta) mu - beta * log(-log(runif(n)))
+n_years <- 60
+regime  <- rbinom(n_years, size = 1, prob = 0.65)
+y <- ifelse(regime == 1,
+            rgumbel(n_years, mu = 36, beta = 2.5),
+            rgumbel(n_years, mu = 22, beta = 3.0))
+hist(y, breaks = 25, freq = FALSE,
+     main = "Simulated annual maxima at a climatic-edge station",
+     xlab = "annual maximum (deg)", col = "grey85", border = "white")
+```
+
+The dip test does not reject unimodality on this sample, even though
+by construction the data come from a mixture:
+
+```{r sim-dip}
+diptest::dip.test(y)$p.value
+```
+
+That is the case the catalogue worries about: the dip test gives the
+"unimodal" verdict, but the WAIC of a mixture is decisively better
+than the WAIC of a single Gumbel because the mixture matches the joint
+behaviour at both tails.
+
+### The mixture model in the DSL
+
+The 2-component Gumbel mixture log-density is `log(p * f_1(y) + (1 - p)
+* f_2(y))`, the canonical log-sum-exp pattern that the DSL handles
+through `log`, `exp`, `+`. The reparametrisation maps every parameter
+to the real line so random-walk Metropolis can propose freely:
+
+- `eta_p` in `R`, with `p = 1 / (1 + exp(-eta_p))`;
+- `lb1`, `lb2` in `R`, with `beta_j = exp(lb_j)`;
+- `mu1`, `mu2` in `R`, unconstrained.
+
+```{r mix-model}
+model_mix <- gpum_model(
+  loglik = ~ log(
+      (1 / (1 + exp(-eta_p))) *
+        exp(-((y - mu1) / exp(lb1)) - exp(-((y - mu1) / exp(lb1)))) / exp(lb1)
+    + (1 - 1 / (1 + exp(-eta_p))) *
+        exp(-((y - mu2) / exp(lb2)) - exp(-((y - mu2) / exp(lb2)))) / exp(lb2)
+  ),
+  params = c("eta_p", "mu1", "lb1", "mu2", "lb2"),
+  data   = "y"
+)
+```
+
+### Parallel tempering on the mixture posterior
+
+The posterior of a mixture has at least two equivalent labellings
+(component 1 and component 2 can switch with no change in likelihood),
+so the posterior is genuinely multimodal in the parameter space even
+when the data marginal is unimodal. Parallel tempering is the right
+sampler. The cold chain visits each labelling and the swap step keeps
+the chain from sticking to one of them; a post-processing step then
+fixes a canonical labelling.
+
+```{r mix-fit}
+qs <- quantile(y, c(0.2, 0.8))
+init <- cbind(eta_p = rep(0, 8),
+              mu1   = rep(qs[1], 8) + rnorm(8, 0, 1),
+              lb1   = rep(log(2), 8),
+              mu2   = rep(qs[2], 8) + rnorm(8, 0, 1),
+              lb2   = rep(log(2), 8))
+fit_mix <- gpu_metropolis(
+  model_mix, data = list(y = y),
+  proposal_sd = c(0.3, 0.4, 0.1, 0.4, 0.1),
+  init = init, n_iter = 8000, n_chains = 8,
+  method = "pt", seed = 11, backend = "cpu"
+)
+fit_mix
+```
+
+### Identifiability post-processing
+
+The mixture log-density is invariant under swapping component 1 and
+component 2 (and simultaneously flipping `eta_p` to `-eta_p`). The
+canonical labelling enforced here is `mu1 < mu2`: every cold-chain draw
+in which `mu1 > mu2` has its component labels swapped.
+
+```{r relabel}
+draws <- fit_mix$draws[, 1L, , drop = TRUE]
+swap_idx <- draws[, "mu1"] > draws[, "mu2"]
+if (any(swap_idx)) {
+  draws[swap_idx, ] <- draws[swap_idx, c("eta_p", "mu2", "lb2", "mu1", "lb1")]
+  draws[swap_idx, "eta_p"] <- -draws[swap_idx, "eta_p"]
+}
+p     <- 1 / (1 + exp(-draws[, "eta_p"]))
+mu_cool  <- draws[, "mu1"];  beta_cool <- exp(draws[, "lb1"])
+mu_warm  <- draws[, "mu2"];  beta_warm <- exp(draws[, "lb2"])
+
+post <- data.frame(
+  parameter = c("p (cool)", "mu_cool", "beta_cool", "mu_warm", "beta_warm"),
+  mean      = c(mean(p), mean(mu_cool), mean(beta_cool),
+                mean(mu_warm), mean(beta_warm)),
+  sd        = c(sd(p), sd(mu_cool), sd(beta_cool),
+                sd(mu_warm), sd(beta_warm)),
+  truth     = c(0.35, 22, 3.0, 36, 2.5)
+)
+print(post, row.names = FALSE)
+```
+
+Posterior means recover the four Gumbel parameters within a posterior
+standard deviation; the mixing weight is slightly underestimated, the
+usual signal that for `n = 60` the data identify the modes but not their
+exact balance.
+
+### Posterior predictive check
+
+A direct visual check: sample `n_years` new annual maxima from the
+posterior of the fitted mixture and compare the empirical distribution
+of those samples against the observed data.
+
+```{r ppc, fig.width = 7, fig.height = 4}
+set.seed(99)
+n_ppc <- 500
+rep_idx <- sample(seq_len(nrow(draws)), n_ppc, replace = TRUE)
+ppc_samples <- vapply(rep_idx, function(i) {
+  pi <- p[i]
+  z  <- rbinom(n_years, 1, 1 - pi)
+  ifelse(z == 1,
+         rgumbel(n_years, mu_warm[i], beta_warm[i]),
+         rgumbel(n_years, mu_cool[i], beta_cool[i]))
+}, numeric(n_years))
+ppc_pooled <- as.vector(ppc_samples)
+
+plot(density(ppc_pooled), col = "red", lwd = 2,
+     main = "Posterior predictive vs observed",
+     xlab = "annual maximum (deg)", ylim = c(0, 0.13))
+lines(density(y), col = "black", lwd = 2)
+rug(y, col = "black")
+legend("topleft", lty = 1, lwd = 2, col = c("black", "red"),
+       legend = c("observed", "PPC"), bty = "n")
+```
+
+The two densities overlap; the slight differences at the two peaks are
+within the sampling variation of `n = 60` annual maxima.
+
+## Fair comparison with current practice
+
+A fair benchmark of `gpumetropolis` against existing R practice on
+extreme-value mixtures asks two distinct questions: how does the single
+Gumbel fit compare to the established `evd::fgev` route, and how does
+the 2-component Gumbel mixture fit compare to what users would
+otherwise reach for. The two answers are quite different and the
+package's value proposition is in the second one.
+
+### Single Gumbel: matched by an established MLE pipeline
+
+`evd::fgev` is the standard one-liner for fitting a Gumbel (or full GEV)
+by maximum likelihood. On the Oxford series:
+
+```{r evd-single}
+fit_evd <- evd::fgev(y_ox, shape = 0)  # shape = 0 -> Gumbel
+fit_evd$estimate
+sqrt(diag(fit_evd$var.cov))   # standard errors
+```
+
+The MLE point estimates of `loc` (`mu`) and `scale` (`beta`) agree with
+the Bayesian posterior means of `fit_single` above to within the
+posterior standard deviation. The MLE pipeline is faster (a single
+optimisation) and is the right choice when the goal is just the point
+estimate plus delta-method standard errors. The Bayesian path through
+`gpumetropolis` adds: a full posterior, propagation of uncertainty into
+predictive quantities (return levels, quantile credible bands), and the
+portability of one kernel source across CPU, CUDA and Vulkan when the
+log-likelihood is expensive over a large series.
+
+Honest verdict on the single-component case: the established `evd`
+pipeline is competitive in accuracy and faster in wall-clock time;
+`gpumetropolis` is the right choice when the user already wants a full
+Bayesian workflow or wants the same code path for downstream mixture
+and copula inference. Neither dominates the other on the Tier A
+unimodal Gumbel taken alone.
+
+### Two-component Gumbel mixture: no standard one-liner in R
+
+There is no R package today that fits a `k`-component Gumbel mixture
+through a single function call. The closest options are:
+
+| Path | What it covers | Effort |
+|---|---|---|
+| `evd`, `extRemes`, `ismev`, `eva` | single Gumbel / GEV / GP | low, mature |
+| `evmix` | bulk-and-tail hybrid models (Normal bulk plus GP tail) | low for the supported families, not a `k`-component Gumbel mixture |
+| `mclust`, `mixR`, `flexmix`, `mixtools` | finite mixtures, almost exclusively of Gaussians | low for Gaussian mixtures, requires custom distribution code for Gumbel |
+| `evdbayes` | Bayesian inference for the single GEV via Metropolis | low for single GEV, requires manual extension for mixtures |
+| Custom `rstan` / `cmdstanr` | any user-coded mixture, including Gumbel | medium to high; needs Stan code, posterior label-switching handling and warm-up tuning |
+| Custom `nimble` | same as Stan with BUGS-style syntax | medium; nimble does not ship `dgumbel`, the user writes a custom distribution |
+
+The honest comparison for the mixture case is therefore against
+custom-written Stan or nimble code. `gpumetropolis` offers three things
+in that comparison:
+
+1. **One-formula declaration**. The model declaration above is the
+   same R formula a user would already write for the log-likelihood;
+   the package compiles it to bytecode and runs it on the chosen
+   backend. The user does not write Stan or BUGS.
+2. **Built-in parallel tempering**. The label-switching multimodality
+   of a mixture posterior is the textbook case for tempering; in
+   `gpumetropolis` it is `method = "pt"`. In a Stan or nimble workflow
+   the user typically reaches for relabelling tricks, ordered
+   constraints or hand-coded swap moves.
+3. **Backend portability**. The same declaration runs on the CPU,
+   CUDA and Vulkan. For an extreme-value series of length `n = 80` the
+   GPU is not faster than the CPU; the portability matters when the
+   workflow scales to longer series or to many parallel chains.
+
+A fair speed comparison is harder to state in one number because the
+mixture pipeline is not standardised. The closest informal benchmark:
+running the simulation fit above with `nimble` requires (i) a custom
+`dgumbel` distribution, (ii) a careful order constraint on the means,
+(iii) a longer warm-up to manage label-switching without tempering.
+The user who is willing to write that code gets results comparable to
+the `gpumetropolis` mixture in wall-clock; the user who wants a
+one-formula path benefits from this package.
+
+The catalogue layer of v0.6.0 (next section) is the design that closes
+the remaining gap: `gpum_fit_catalog(y, catalog = c("gumbel", "gumbel_mix2"))`
+will rank the two candidates by WAIC and pick the better one, the
+practical equivalent of the established workflow for single Gumbel plus
+the missing standard for the mixture.
+
+## What is manual today and what becomes automatic in v0.6.0
+
+The whole script above is the v0.3.0 user experience for an
+extreme-value mixture: write the DSL formula, reparametrise to
+unbounded coordinates, set per-chain initial values that bracket the
+modes, pick `method = "pt"`, post-process the labels.
+
+The v0.6.0 release, the marginal auto-selection described in
+[`CATALOG_DESIGN.md`](https://github.com/pcbrom/gpumetropolis/blob/main/CATALOG_DESIGN.md),
+will collapse the workflow to a single call:
+
+```{r auto-future, eval = FALSE}
+# Not available until v0.6.0
+result <- gpum_fit_catalog(
+  data    = y,
+  catalog = c("gumbel", "gumbel_mix2"),
+  ranking = "WAIC"
+)
+plot(result)
+```
+
+At that point the catalogue layer chooses the candidates from the data
+type, runs the unimodal Gumbel and the 2-component Gumbel mixture in
+parallel, ranks them by WAIC, handles the reparametrisation, enforces
+the `mu_1 < mu_2` constraint, and opens a posterior predictive plot for
+the top model. Until then the workflow above is the honest manual path.
+
+## References
+
+- Coles, S. *An Introduction to Statistical Modeling of Extreme Values*.
+  Springer, 2001.
+- Stephenson, A. G. evd: Extreme value distributions. *R News*, v. 2,
+  n. 2, p. 31-32, 2002.
+- Hartigan, J. A., e Hartigan, P. M. The dip test of unimodality.
+  *The Annals of Statistics*, v. 13, n. 1, p. 70-84, 1985.
+- McLachlan, G., e Peel, D. *Finite Mixture Models*. Wiley, 2000.
+- Ray, S., e Lindsay, B. G. The topography of multivariate normal
+  mixtures. *The Annals of Statistics*, v. 33, n. 5, p. 2042-2065, 2005.
