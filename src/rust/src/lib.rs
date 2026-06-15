@@ -78,6 +78,7 @@ fn rust_gpu_metropolis(
     prior_consts: Vec<f64>,
     init: Vec<f64>,
     proposal_sd: Vec<f64>,
+    temperatures: Vec<f64>,
     n_iter: i32,
     seed: f64,
     backend: &str,
@@ -96,6 +97,7 @@ fn rust_gpu_metropolis(
         n_obs as usize,
         &init,
         &proposal_sd,
+        &temperatures,
         n_iter as usize,
         seed as u32,
         gpu::Backend::from_name(backend),
@@ -105,6 +107,7 @@ fn rust_gpu_metropolis(
     list!(
         draws = draws,
         accept_rate = accept_rate,
+        last_log_post = res.last_log_post,
         n_iter = res.n_iter as i32,
         n_chains = res.n_chains as i32,
         n_params = res.n_params as i32

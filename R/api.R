@@ -118,6 +118,18 @@ print.gpum_model <- function(x, ...) {
 #'   Roberts-Gelman-Gilks 1997, Roberts-Rosenthal 2009). Adaptation stops
 #'   cleanly at the end of warmup, so the sampling phase is stationary.
 #'   Set `FALSE` to keep the trim-only warmup of 0.1.x.
+#' @param method Sampling method: `"rwm"` (default) is the random-walk
+#'   Metropolis with optional per-chain adaptation; `"pt"` is parallel
+#'   tempering with one chain per temperature on the same target and
+#'   adjacent-pair swap proposals between batches. The cold chain
+#'   (`T = 1`) provides the posterior samples in `"pt"`.
+#' @param temperatures Numeric vector of length `n_chains`, the
+#'   temperature of each chain in `method = "pt"`. Ignored for `"rwm"`.
+#'   When `NULL` (default), a geometric ladder from 1 to 10 is used.
+#'   The first entry must be 1 for the cold chain.
+#' @param swap_every Integer, the iteration count between swap proposals
+#'   in `method = "pt"`. Ignored for `"rwm"`. When `NULL` (default),
+#'   uses `max(n_chains, 10)`.
 #' @param seed Integer seed. Each chain advances its own counter-based stream
 #'   from a triple32 hash; the seed is itself hashed, so runs with consecutive
 #'   integer seeds get independent streams.
@@ -144,12 +156,15 @@ print.gpum_model <- function(x, ...) {
 #' @export
 gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
                            n_iter = 2000L, n_chains = 4L, warmup = NULL,
-                           adapt = TRUE, seed = 1L,
+                           adapt = TRUE, method = c("rwm", "pt"),
+                           temperatures = NULL, swap_every = NULL,
+                           seed = 1L,
                            backend = c("auto", "cpu", "cuda", "vulkan")) {
   if (!inherits(model, "gpum_model")) {
     stop("`model` must be a gpum_model from gpum_model().", call. = FALSE)
   }
   backend <- match.arg(backend)
+  method <- match.arg(method)
 
   # The native CPU backend parallelises over chains with a Rayon thread pool,
   # which by default claims every core. Under `R CMD check` the CRAN check
@@ -253,14 +268,63 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
          call. = FALSE)
   }
 
-  rust_call <- function(init_flat, sd_flat, n_iter, seed) {
+  rust_call <- function(init_flat, sd_flat, n_iter, seed,
+                        temperatures_flat = rep(1.0, n_chains)) {
     rust_gpu_metropolis(
       model$loglik$code, model$loglik$consts, np,
       as.numeric(data_flat), model$n_cols, n_obs,
       model$prior$code, model$prior$consts,
       init_flat, sd_flat,
+      as.numeric(temperatures_flat),
       as.integer(n_iter), as.numeric(seed), backend
     )
+  }
+
+  if (identical(method, "pt")) {
+    if (is.null(temperatures)) {
+      temperatures <- .pt_default_ladder(n_chains)
+    } else {
+      temperatures <- as.numeric(temperatures)
+      if (length(temperatures) != n_chains) {
+        stop("`temperatures` must have one value per chain.", call. = FALSE)
+      }
+      if (any(!is.finite(temperatures)) || any(temperatures <= 0)) {
+        stop("`temperatures` must be positive and finite.", call. = FALSE)
+      }
+    }
+    if (is.null(swap_every)) {
+      swap_every <- max(as.integer(n_chains), 10L)
+    }
+    pt <- .pt_orchestrate(
+      rust_call = rust_call, np = np, n_chains = n_chains,
+      init_mat = init_mat, proposal_sd_mat = proposal_sd_mat,
+      temperatures = temperatures, n_iter = n_iter, warmup = warmup,
+      swap_every = swap_every, adapt = isTRUE(adapt),
+      seed = as.numeric(seed)
+    )
+    draws <- array(
+      as.numeric(pt$draws),
+      dim = dim(pt$draws),
+      dimnames = list(NULL, NULL, model$params)
+    )
+    return(structure(
+      list(draws = draws, accept_rate = pt$accept_rate, model = model,
+           n_iter = dim(pt$draws)[1L],
+           n_iter_total = pt$warmup_used + dim(pt$draws)[1L],
+           warmup = pt$warmup_used, n_chains = n_chains,
+           n_params = np, backend = backend, seed = seed,
+           method = "pt", temperatures = temperatures,
+           swap_every = swap_every,
+           adaptation = list(
+             final_proposal_sd = pt$final_proposal_sd,
+             final_scales = pt$final_scales,
+             n_batches = pt$n_batches,
+             batch_sizes = pt$batch_sizes,
+             accept_history = pt$accept_history,
+             swap_history = pt$swap_history
+           )),
+      class = "gpum_fit"
+    ))
   }
 
   if (isTRUE(adapt) && warmup > 0L) {
@@ -287,6 +351,7 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
            n_iter = res$n_iter, n_iter_total = am$warmup_used + res$n_iter,
            warmup = am$warmup_used, n_chains = res$n_chains,
            n_params = res$n_params, backend = backend, seed = seed,
+           method = "rwm",
            adaptation = list(
              final_proposal_sd = am$final_proposal_sd,
              final_scales = am$final_scales,
@@ -318,7 +383,7 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
     list(draws = draws, accept_rate = res$accept_rate, model = model,
          n_iter = kept, n_iter_total = res$n_iter, warmup = warmup,
          n_chains = res$n_chains, n_params = res$n_params,
-         backend = backend, seed = seed),
+         backend = backend, seed = seed, method = "rwm"),
     class = "gpum_fit"
   )
 }
@@ -327,6 +392,7 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
 print.gpum_fit <- function(x, ...) {
   cat("<gpum_fit>\n")
   cat(sprintf("  parameters  : %s\n", paste(x$model$params, collapse = ", ")))
+  cat(sprintf("  method      : %s\n", x$method %||% "rwm"))
   cat(sprintf("  backend     : %s\n", x$backend))
   cat(sprintf("  chains      : %d\n", x$n_chains))
   mode <- if (!is.null(x$adaptation)) "adaptive" else "trim"
@@ -334,10 +400,25 @@ print.gpum_fit <- function(x, ...) {
               x$n_iter, x$n_iter_total, x$warmup, mode))
   cat(sprintf("  accept_rate : %.3f to %.3f\n",
               min(x$accept_rate), max(x$accept_rate)))
+  if (identical(x$method, "pt") && !is.null(x$adaptation$swap_history)) {
+    sh <- x$adaptation$swap_history
+    sw_mean <- rowMeans(sh, na.rm = TRUE)
+    cat(sprintf("  swap accept : pairs (1-%d) mean %.3f to %.3f\n",
+                length(sw_mean), min(sw_mean, na.rm = TRUE),
+                max(sw_mean, na.rm = TRUE)))
+  }
   for (j in seq_len(x$n_params)) {
-    post <- x$draws[, , j]
+    if (identical(x$method, "pt")) {
+      post <- x$draws[, 1L, j]
+      label <- sprintf("%s (T=1)", x$model$params[j])
+    } else {
+      post <- x$draws[, , j]
+      label <- x$model$params[j]
+    }
     cat(sprintf("  %-11s : posterior mean %.4f (sd %.4f)\n",
-                x$model$params[j], mean(post), stats::sd(as.vector(post))))
+                label, mean(post), stats::sd(as.vector(post))))
   }
   invisible(x)
 }
+
+`%||%` <- function(a, b) if (is.null(a)) b else a

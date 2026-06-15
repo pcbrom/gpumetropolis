@@ -152,6 +152,187 @@
   )
 }
 
+# Geometric temperature ladder. The default attaches T = 1 to the first
+# chain and grows by a geometric factor so the last chain reaches `t_max`.
+# Roberts-Rosenthal (2009) recommend tuning the spacing so the swap
+# acceptance between adjacent chains sits near 0.234; the geometric
+# default is a reasonable starting point for that.
+.pt_default_ladder <- function(n_chains, t_max = 10) {
+  if (n_chains <= 1L) return(rep(1.0, n_chains))
+  beta <- t_max^(1 / (n_chains - 1L))
+  beta^(seq_len(n_chains) - 1L)
+}
+
+# Orchestrate a parallel-tempering run. Each batch advances every chain
+# at its own temperature; between batches an adjacent-pair swap step is
+# proposed. Adaptation, when on, updates per-chain proposal_sd during
+# the warmup batches only, and freezes at the end of warmup so the
+# sampling phase is stationary.
+.pt_orchestrate <- function(rust_call, np, n_chains, init_mat,
+                            proposal_sd_mat, temperatures, n_iter,
+                            warmup, swap_every, adapt, seed) {
+  if (length(temperatures) != n_chains) {
+    stop("`temperatures` must have one value per chain.", call. = FALSE)
+  }
+  if (swap_every < 1L) {
+    stop("`swap_every` must be a positive integer.", call. = FALSE)
+  }
+  total_iters <- n_iter
+  swap_every <- as.integer(swap_every)
+  warmup <- as.integer(warmup)
+  n_batches <- max(1L, total_iters %/% swap_every)
+  batch_sizes <- rep(swap_every, n_batches)
+  remainder <- total_iters - n_batches * swap_every
+  if (remainder > 0L) {
+    batch_sizes[n_batches] <- batch_sizes[n_batches] + remainder
+  }
+  warmup_batches <- max(0L, min(n_batches, warmup %/% swap_every))
+  warmup_used <- if (warmup_batches > 0L) {
+    sum(batch_sizes[seq_len(warmup_batches)])
+  } else {
+    0L
+  }
+
+  states <- lapply(seq_len(n_chains), function(c) {
+    .am_init_state(np, sigma_init = proposal_sd_mat[c, ]^2)
+  })
+  scales <- rep(1.0, n_chains)
+  current_init <- init_mat
+  current_sd <- proposal_sd_mat
+  current_logpost <- rep(NA_real_, n_chains)
+
+  sampling_iters <- total_iters - warmup_used
+  if (sampling_iters < 1L) sampling_iters <- 1L
+  draws_kept <- array(NA_real_, dim = c(sampling_iters, n_chains, np))
+  accept_acc <- numeric(n_chains)
+  iters_acc <- 0L
+  kept_filled <- 0L
+
+  swap_pairs <- if (n_chains >= 2L) n_chains - 1L else 0L
+  swap_history <- if (swap_pairs > 0L) {
+    matrix(NA_real_, nrow = swap_pairs, ncol = n_batches)
+  } else {
+    matrix(numeric(0), nrow = 0, ncol = 0)
+  }
+  accept_history <- matrix(NA_real_, nrow = n_chains, ncol = n_batches)
+
+  for (b in seq_len(n_batches)) {
+    bsize <- batch_sizes[b]
+    res <- rust_call(init_flat = as.numeric(t(current_init)),
+                     sd_flat = as.numeric(t(current_sd)),
+                     n_iter = bsize,
+                     seed = seed + b - 1L,
+                     temperatures_flat = temperatures)
+    draws_batch <- array(res$draws,
+                         dim = c(res$n_iter, res$n_chains, res$n_params))
+    current_logpost <- as.numeric(res$last_log_post)
+    accept_history[, b] <- res$accept_rate
+
+    in_warmup <- b <= warmup_batches
+    if (!in_warmup) {
+      start <- kept_filled + 1L
+      end <- kept_filled + bsize
+      draws_kept[start:end, , ] <- draws_batch
+      accept_acc <- accept_acc + bsize * res$accept_rate
+      iters_acc <- iters_acc + bsize
+      kept_filled <- end
+    }
+
+    if (in_warmup && isTRUE(adapt)) {
+      for (c in seq_len(n_chains)) {
+        chain_draws <- if (np == 1L) {
+          matrix(draws_batch[, c, ], ncol = 1L)
+        } else {
+          draws_batch[, c, ]
+        }
+        states[[c]] <- .am_welford_update_batch(states[[c]], chain_draws)
+        scales[c] <- .am_robbins_monro_scale(scales[c], res$accept_rate[c],
+                                             batch_idx = b, d = np)
+        cov_c <- .am_covariance(states[[c]])
+        diag_sd <- sqrt(pmax(diag(cov_c), 1e-12))
+        current_sd[c, ] <- scales[c] * diag_sd
+      }
+    }
+
+    for (c in seq_len(n_chains)) {
+      current_init[c, ] <- as.numeric(draws_batch[res$n_iter, c, ])
+    }
+
+    if (swap_pairs > 0L) {
+      sweep_order <- if (b %% 2L == 1L) {
+        seq.int(1L, swap_pairs, by = 2L)
+      } else {
+        seq.int(min(2L, swap_pairs), swap_pairs, by = 2L)
+      }
+      u_vec <- .pt_swap_draws(seed = seed, batch = b,
+                              n_draws = length(sweep_order))
+      pair_attempts <- integer(swap_pairs)
+      pair_accepts <- integer(swap_pairs)
+      for (k in seq_along(sweep_order)) {
+        i <- sweep_order[k]
+        u <- u_vec[k]
+        delta <- (current_logpost[i + 1L] - current_logpost[i]) *
+          (1 / temperatures[i] - 1 / temperatures[i + 1L])
+        pair_attempts[i] <- pair_attempts[i] + 1L
+        if (is.finite(delta) && log(u) < delta) {
+          tmp_state <- current_init[i, ]
+          current_init[i, ] <- current_init[i + 1L, ]
+          current_init[i + 1L, ] <- tmp_state
+          tmp_lp <- current_logpost[i]
+          current_logpost[i] <- current_logpost[i + 1L]
+          current_logpost[i + 1L] <- tmp_lp
+          pair_accepts[i] <- pair_accepts[i] + 1L
+        }
+      }
+      swap_history[, b] <- ifelse(pair_attempts > 0L,
+                                   pair_accepts / pair_attempts,
+                                   NA_real_)
+    }
+  }
+
+  sampling_accept <- if (iters_acc > 0L) {
+    accept_acc / iters_acc
+  } else {
+    res$accept_rate
+  }
+  list(
+    draws = draws_kept[seq_len(kept_filled), , , drop = FALSE],
+    accept_rate = sampling_accept,
+    final_proposal_sd = current_sd,
+    final_scales = scales,
+    final_init = current_init,
+    n_batches = n_batches,
+    batch_sizes = batch_sizes,
+    warmup_batches = warmup_batches,
+    warmup_used = warmup_used,
+    swap_history = swap_history,
+    accept_history = accept_history,
+    seed_next = seed + n_batches
+  )
+}
+
+# Reproducible uniform draws for the parallel-tempering swap step. The
+# draws are derived from `seed` and the batch index, so the same `seed`
+# replays exactly. The caller's global RNG state is saved and restored,
+# the host loop never disturbs the caller's R stream.
+.pt_swap_draws <- function(seed, batch, n_draws) {
+  if (n_draws <= 0L) return(numeric(0))
+  old_seed <- if (exists(".Random.seed", envir = .GlobalEnv)) {
+    get(".Random.seed", envir = .GlobalEnv)
+  } else {
+    NULL
+  }
+  mix <- (as.numeric(seed) + as.numeric(batch) * 2654435761) %% 2^31
+  set.seed(as.integer(mix))
+  u <- stats::runif(n_draws)
+  if (!is.null(old_seed)) {
+    assign(".Random.seed", old_seed, envir = .GlobalEnv)
+  } else if (exists(".Random.seed", envir = .GlobalEnv)) {
+    rm(".Random.seed", envir = .GlobalEnv)
+  }
+  u
+}
+
 .am_cholesky <- function(Sigma, eps = 1e-8) {
   d <- nrow(Sigma)
   reg <- eps * mean(diag(Sigma))

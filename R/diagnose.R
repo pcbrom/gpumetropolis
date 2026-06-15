@@ -38,12 +38,22 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
   if (!inherits(fit, "gpum_fit")) {
     stop("`fit` must be a gpum_fit from gpu_metropolis().", call. = FALSE)
   }
-  draws <- fit$draws
+  is_pt <- identical(fit$method, "pt")
+  # In parallel tempering only the cold chain (T = 1, first column of the
+  # draws array) samples the target posterior. The hot chains feed it
+  # through swap proposals but are not posterior samples themselves, so
+  # the convergence summary collapses to the cold chain.
+  draws <- if (is_pt) {
+    fit$draws[, 1L, , drop = FALSE]
+  } else {
+    fit$draws
+  }
+  diag_n_chains <- if (is_pt) 1L else fit$n_chains
   params <- fit$model$params
   np <- fit$n_params
 
   stat_rows <- lapply(seq_len(np), function(p) {
-    M <- .gpum_param_matrix(draws, p, fit$n_chains)
+    M <- .gpum_param_matrix(draws, p, diag_n_chains)
     v <- as.vector(M)
     q <- stats::quantile(v, c(0.025, 0.5, 0.975), names = FALSE)
     rh <- rhat(M, warmup = 0L)
@@ -101,15 +111,41 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
     }
   }
 
+  # Parallel tempering swap hint: when any adjacent pair finishes the run
+  # below 10% acceptance, the temperature ladder is too aggressive and
+  # the cold chain is starving for swaps. The remedy is either a smaller
+  # `t_max` so the ladder is denser, or more chains spread across the
+  # current range.
+  swap_hint <- NULL
+  if (is_pt && !is.null(fit$adaptation$swap_history)) {
+    sh <- fit$adaptation$swap_history
+    if (is.matrix(sh) && ncol(sh) >= 1L) {
+      sw_mean <- rowMeans(sh, na.rm = TRUE)
+      worst <- which.min(sw_mean)
+      if (length(worst) == 1L && is.finite(sw_mean[worst]) &&
+          sw_mean[worst] < 0.1) {
+        swap_hint <- sprintf(
+          paste0("Pair (%d, %d) swaps at %.2f, below 0.1. ",
+                 "Consider a denser temperature ladder."),
+          worst, worst + 1L, sw_mean[worst]
+        )
+      }
+    }
+  }
+
+  method_label <- if (is_pt) "pt, cold chain" else (fit$method %||% "rwm")
   cat(sprintf("<gpum_diagnose: %s>\n", verdict[1L]))
-  cat(sprintf("  backend %s, chains %d, iterations %d (warmup %d, %s)\n",
-              fit$backend, fit$n_chains, fit$n_iter, fit$warmup,
+  cat(sprintf("  method %s, backend %s, chains %d, iterations %d (warmup %d, %s)\n",
+              method_label, fit$backend, fit$n_chains, fit$n_iter, fit$warmup,
               if (!is.null(fit$adaptation)) "adaptive" else "trim"))
   cat("\n")
   print(format(summary, digits = 4, nsmall = 4), row.names = FALSE)
   cat("\n  ", verdict[2L], "\n", sep = "")
   if (!is.null(adaptation_hint)) {
     cat("  Hint: ", adaptation_hint, "\n", sep = "")
+  }
+  if (!is.null(swap_hint)) {
+    cat("  Hint: ", swap_hint, "\n", sep = "")
   }
 
   if (isTRUE(plot)) {
@@ -119,7 +155,8 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
   if (isTRUE(return_data)) {
     invisible(list(summary = summary, verdict = verdict,
                    adaptation = fit$adaptation,
-                   adaptation_hint = adaptation_hint))
+                   adaptation_hint = adaptation_hint,
+                   swap_hint = swap_hint))
   } else {
     invisible(NULL)
   }
@@ -138,17 +175,28 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
 # book-keeping, an extra row shows the per-chain acceptance over the
 # warmup batches with the asymptotic optimum as a horizontal reference.
 .gpum_diagnose_plot <- function(fit, params) {
+  is_pt <- identical(fit$method, "pt")
   np <- fit$n_params
   has_adapt <- !is.null(fit$adaptation)
-  n_rows <- np + as.integer(has_adapt)
+  has_swap <- is_pt && !is.null(fit$adaptation$swap_history) &&
+              is.matrix(fit$adaptation$swap_history) &&
+              ncol(fit$adaptation$swap_history) > 0L
+  n_rows <- np + as.integer(has_adapt) + as.integer(has_swap)
   op <- graphics::par(mfrow = c(n_rows, 4L),
                       oma = c(0, 0, 1.5, 0),
                       mar = c(3, 3, 2, 1),
                       mgp = c(1.8, 0.5, 0))
   on.exit(graphics::par(op), add = TRUE)
 
+  draws_for_plot <- if (is_pt) {
+    fit$draws[, 1L, , drop = FALSE]
+  } else {
+    fit$draws
+  }
+  panel_n_chains <- if (is_pt) 1L else fit$n_chains
+
   for (p in seq_len(np)) {
-    M <- .gpum_param_matrix(fit$draws, p, fit$n_chains)
+    M <- .gpum_param_matrix(draws_for_plot, p, panel_n_chains)
     v <- as.vector(M)
 
     graphics::matplot(M, type = "l", lty = 1,
@@ -201,6 +249,35 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
                    sprintf("%d warmup batches\nsizes %d to %d",
                            nb, min(fit$adaptation$batch_sizes),
                            max(fit$adaptation$batch_sizes)),
+                   cex = 0.9)
+  }
+
+  if (has_swap) {
+    sh <- fit$adaptation$swap_history
+    nb <- ncol(sh)
+    graphics::matplot(seq_len(nb), t(sh), type = "l", lty = 1,
+                      xlab = "batch", ylab = "swap accept",
+                      main = "PT: swap accept per pair",
+                      ylim = c(0, 1))
+    graphics::abline(h = 0.234, lty = 2, col = "red")
+
+    sw_mean <- rowMeans(sh, na.rm = TRUE)
+    plot(seq_along(sw_mean), sw_mean, type = "b",
+         xlab = "pair (c, c+1)", ylab = "mean swap accept",
+         main = "PT: mean swap per pair",
+         ylim = c(0, 1))
+    graphics::abline(h = 0.234, lty = 2, col = "red")
+
+    plot(seq_along(fit$temperatures), fit$temperatures, type = "b",
+         log = "y", xlab = "chain", ylab = "temperature (log)",
+         main = "PT: temperature ladder")
+
+    graphics::plot.new()
+    graphics::plot.window(xlim = c(0, 1), ylim = c(0, 1))
+    graphics::text(0.5, 0.5,
+                   sprintf("ladder T = %.2f to %.2f\nswap_every = %d",
+                           min(fit$temperatures), max(fit$temperatures),
+                           fit$swap_every),
                    cex = 0.9)
   }
 }

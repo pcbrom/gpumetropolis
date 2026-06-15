@@ -109,9 +109,11 @@ fn metropolis_block_kernel(
     data: &Array<f32>,
     init: &Array<f32>,
     proposal_sd: &Array<f32>,
+    temperatures: &Array<f32>,
     meta: &Array<u32>,        // [n_instr, n_params, n_cols, n_obs, n_iter, prior_n, seed]
     out_draws: &mut Array<f32>,
     out_accept: &mut Array<f32>,
+    out_logpost: &mut Array<f32>,
 ) {
     let chain = usize::cast_from(CUBE_POS);
     let tid = usize::cast_from(UNIT_POS);
@@ -221,13 +223,18 @@ fn metropolis_block_kernel(
                 s /= 2usize;
             }
 
-            // Thread 0 accepts or rejects and records the draw.
+            // Thread 0 accepts or rejects and records the draw. The
+            // acceptance ratio is divided by the chain temperature; for
+            // T = 1 this recovers the textbook Metropolis ratio, and for
+            // T > 1 the chain accepts more aggressively, the cornerstone
+            // of parallel tempering's hot chains.
             if tid == 0 {
                 let plp = partials[0] + vm_eval(prior_code, prior_consts,
                                                 prior_n, &local, data, 0);
                 ctr += 1u32;
                 let u = rand_uniform(seedmix, ctr);
-                if u.ln() < plp - cur {
+                let temperature = temperatures[chain];
+                if u.ln() < (plp - cur) / temperature {
                     let mut m = 0usize;
                     while m < n_params {
                         state[m] = prop[m];
@@ -247,6 +254,7 @@ fn metropolis_block_kernel(
         }
         if tid == 0 {
             out_accept[chain] = f32::cast_from(accepts) / f32::cast_from(n_iter);
+            out_logpost[chain] = cur;
         }
     }
 }
@@ -258,6 +266,9 @@ pub struct ChainResult {
     pub n_params: usize,
     pub draws: Vec<f32>,
     pub accept_rate: Vec<f32>,
+    /// Raw log-posterior at the final state of each chain, needed by the
+    /// parallel-tempering swap step which compares densities across chains.
+    pub last_log_post: Vec<f64>,
 }
 
 #[allow(clippy::too_many_arguments, dead_code)]
@@ -272,6 +283,7 @@ fn run_block<R: Runtime>(
     n_obs: usize,
     init: &[f32],
     proposal_sd: &[f32],
+    temperatures: &[f32],
     n_iter: usize,
     seed: u32,
 ) -> ChainResult {
@@ -285,6 +297,7 @@ fn run_block<R: Runtime>(
     let data_h = client.create_from_slice(f32::as_bytes(data));
     let init_h = client.create_from_slice(f32::as_bytes(init));
     let psd_h = client.create_from_slice(f32::as_bytes(proposal_sd));
+    let temp_h = client.create_from_slice(f32::as_bytes(temperatures));
     let meta: [u32; 7] = [
         (code.len() / 2) as u32,
         n_params as u32,
@@ -299,6 +312,7 @@ fn run_block<R: Runtime>(
     let f32_size = core::mem::size_of::<f32>();
     let draws_h = client.empty(n_iter * n_chains * n_params * f32_size);
     let accept_h = client.empty(n_chains * f32_size);
+    let logpost_h = client.empty(n_chains * f32_size);
 
     // One block per chain, 256 threads per block.
     let count = CubeCount::Static(n_chains as u32, 1, 1);
@@ -316,15 +330,22 @@ fn run_block<R: Runtime>(
             ArrayArg::from_raw_parts(data_h, data.len().max(1)),
             ArrayArg::from_raw_parts(init_h, init.len()),
             ArrayArg::from_raw_parts(psd_h, proposal_sd.len()),
+            ArrayArg::from_raw_parts(temp_h, temperatures.len()),
             ArrayArg::from_raw_parts(meta_h, meta.len()),
             ArrayArg::from_raw_parts(draws_h.clone(), n_iter * n_chains * n_params),
             ArrayArg::from_raw_parts(accept_h.clone(), n_chains),
+            ArrayArg::from_raw_parts(logpost_h.clone(), n_chains),
         );
     }
 
     let draws = f32::from_bytes(&client.read_one_unchecked(draws_h)).to_vec();
     let accept_rate =
         f32::from_bytes(&client.read_one_unchecked(accept_h)).to_vec();
+    let last_log_post: Vec<f64> =
+        f32::from_bytes(&client.read_one_unchecked(logpost_h))
+            .iter()
+            .map(|&v| v as f64)
+            .collect();
 
     ChainResult {
         n_iter,
@@ -332,6 +353,7 @@ fn run_block<R: Runtime>(
         n_params,
         draws,
         accept_rate,
+        last_log_post,
     }
 }
 
@@ -350,6 +372,7 @@ pub fn gpu_metropolis_chain(
     n_obs: usize,
     init: &[f64],
     proposal_sd: &[f64],
+    temperatures: &[f64],
     n_iter: usize,
     seed: u32,
     backend: crate::gpu::Backend,
@@ -359,7 +382,7 @@ pub fn gpu_metropolis_chain(
     if backend == crate::gpu::Backend::Cpu {
         return crate::cpu_native::run(
             code, consts, prior_code, prior_consts, n_params, data, n_cols,
-            n_obs, init, proposal_sd, n_iter, seed,
+            n_obs, init, proposal_sd, temperatures, n_iter, seed,
         );
     }
     // GPU backends are compiled in only when the matching Cargo feature is on.
@@ -368,23 +391,23 @@ pub fn gpu_metropolis_chain(
         let f32v = |s: &[f64]| -> Vec<f32> {
             s.iter().map(|&v| v as f32).collect()
         };
-        let (c, pc, d, i, p) = (
+        let (c, pc, d, i, p, tmp) = (
             f32v(consts), f32v(prior_consts), f32v(data), f32v(init),
-            f32v(proposal_sd),
+            f32v(proposal_sd), f32v(temperatures),
         );
         match backend {
             #[cfg(feature = "cuda")]
             crate::gpu::Backend::Cuda => {
                 return run_block::<cubecl::cuda::CudaRuntime>(
                     code, &c, prior_code, &pc, n_params, &d, n_cols, n_obs,
-                    &i, &p, n_iter, seed,
+                    &i, &p, &tmp, n_iter, seed,
                 );
             }
             #[cfg(feature = "vulkan")]
             crate::gpu::Backend::Vulkan => {
                 return run_block::<cubecl::wgpu::WgpuRuntime>(
                     code, &c, prior_code, &pc, n_params, &d, n_cols, n_obs,
-                    &i, &p, n_iter, seed,
+                    &i, &p, &tmp, n_iter, seed,
                 );
             }
             _ => {}

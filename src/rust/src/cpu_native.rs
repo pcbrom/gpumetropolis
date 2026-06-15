@@ -79,6 +79,7 @@ pub fn run(
     n_obs: usize,
     init: &[f64],
     proposal_sd: &[f64],
+    temperatures: &[f64],
     n_iter: usize,
     seed: u32,
 ) -> ChainResult {
@@ -96,11 +97,14 @@ pub fn run(
         data_ll + vm_eval(prior_code, prior_consts, params, &[], 0)
     };
 
-    // Each chain produces its own draws (f32) and acceptance rate.
-    let per_chain: Vec<(Vec<f32>, f32)> = (0..n_chains)
+    // Each chain produces its own draws (f32), an acceptance rate, and the
+    // raw log-posterior at its final state. The latter is needed by the
+    // parallel tempering swap step, which compares densities across chains.
+    let per_chain: Vec<(Vec<f32>, f32, f64)> = (0..n_chains)
         .into_par_iter()
         .map(|c| {
             let pbase = c * n_params;
+            let temperature = temperatures[c];
             // The base seed is hashed before the chain offset is added, so two
             // runs with consecutive integer seeds get well-separated counter
             // streams rather than streams that overlap by a one-counter shift.
@@ -125,7 +129,11 @@ pub fn run(
                 let plp = log_post(&prop);
                 ctr += 1;
                 let u = rand_uniform(seedmix, ctr);
-                if u.ln() < plp - cur {
+                // Tempered acceptance: at temperature 1 this is the textbook
+                // Metropolis ratio; at temperature T > 1 the chain accepts more
+                // aggressively, which is what makes parallel tempering's hot
+                // chains explore freely.
+                if u.ln() < (plp - cur) / temperature {
                     state.copy_from_slice(&prop);
                     cur = plp;
                     accepts += 1;
@@ -139,15 +147,17 @@ pub fn run(
             } else {
                 accepts as f32 / n_iter as f32
             };
-            (cdraws, rate)
+            (cdraws, rate, cur)
         })
         .collect();
 
     // Assemble into the (n_iter, n_chains, n_params) column-major layout.
     let mut draws = vec![0.0f32; n_iter * n_chains * n_params];
     let mut accept_rate = vec![0.0f32; n_chains];
-    for (c, (cdraws, rate)) in per_chain.iter().enumerate() {
+    let mut last_log_post = vec![0.0f64; n_chains];
+    for (c, (cdraws, rate, lp)) in per_chain.iter().enumerate() {
         accept_rate[c] = *rate;
+        last_log_post[c] = *lp;
         for t in 0..n_iter {
             for j in 0..n_params {
                 draws[t + n_iter * (c + n_chains * j)] = cdraws[t * n_params + j];
@@ -155,5 +165,5 @@ pub fn run(
         }
     }
 
-    ChainResult { n_iter, n_chains, n_params, draws, accept_rate }
+    ChainResult { n_iter, n_chains, n_params, draws, accept_rate, last_log_post }
 }

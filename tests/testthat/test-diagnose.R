@@ -10,7 +10,7 @@ test_that("gpum_diagnose returns the summary and the verdict", {
                         seed = 1, backend = "cpu")
   out <- gpum_diagnose(fit, plot = FALSE, return_data = TRUE)
   expect_named(out, c("summary", "verdict", "adaptation",
-                      "adaptation_hint"))
+                      "adaptation_hint", "swap_hint"))
   expect_equal(nrow(out$summary), 1L)
   expect_true(all(c("mean", "sd", "q2.5", "q50", "q97.5", "Rhat", "ESS",
                     "MCSE") %in% names(out$summary)))

@@ -13,6 +13,9 @@ gpu_metropolis(
   n_chains = 4L,
   warmup = NULL,
   adapt = TRUE,
+  method = c("rwm", "pt"),
+  temperatures = NULL,
+  swap_every = NULL,
   seed = 1L,
   backend = c("auto", "cpu", "cuda", "vulkan")
 )
@@ -53,6 +56,21 @@ asymptotic optimum acceptance (0.234 in \code{d >= 2}, 0.44 in \code{d = 1};
 Roberts-Gelman-Gilks 1997, Roberts-Rosenthal 2009). Adaptation stops
 cleanly at the end of warmup, so the sampling phase is stationary.
 Set \code{FALSE} to keep the trim-only warmup of 0.1.x.}
+
+\item{method}{Sampling method: \code{"rwm"} (default) is the random-walk
+Metropolis with optional per-chain adaptation; \code{"pt"} is parallel
+tempering with one chain per temperature on the same target and
+adjacent-pair swap proposals between batches. The cold chain
+(\code{T = 1}) provides the posterior samples in \code{"pt"}.}
+
+\item{temperatures}{Numeric vector of length \code{n_chains}, the
+temperature of each chain in \code{method = "pt"}. Ignored for \code{"rwm"}.
+When \code{NULL} (default), a geometric ladder from 1 to 10 is used.
+The first entry must be 1 for the cold chain.}
+
+\item{swap_every}{Integer, the iteration count between swap proposals
+in \code{method = "pt"}. Ignored for \code{"rwm"}. When \code{NULL} (default),
+uses \code{max(n_chains, 10)}.}
 
 \item{seed}{Integer seed. Each chain advances its own counter-based stream
 from a triple32 hash; the seed is itself hashed, so runs with consecutive

@@ -1,3 +1,26 @@
+# gpumetropolis 0.3.0
+
+- `gpu_metropolis(method = "pt")` adds parallel tempering. Each chain
+  runs at its own temperature on the same target; between batches a
+  swap step proposes exchanges of states between adjacent temperatures,
+  with the textbook acceptance ratio
+  `exp((log pi(x_{c+1}) - log pi(x_c)) * (1/T_c - 1/T_{c+1}))`. The cold
+  chain (`T = 1`) provides the posterior samples; the hot chains feed it
+  through swaps. Default ladder is geometric, `T = 1` to `t_max = 10`
+  spaced as `beta^{(c-1)}`. Default `swap_every = max(n_chains, 10)`.
+  Adaptation continues to work per chain inside PT: each chain's
+  proposal scale adapts to its own tempered geometry during warmup.
+- Kernel changes for PT: per-chain `temperatures` buffer threaded
+  through the CPU-native and CubeCL kernels, with the acceptance ratio
+  divided by `T_c`; the kernel also returns the raw log-posterior at
+  each chain's final state so the host swap step can compare densities
+  across chains without recomputing.
+- `gpum_diagnose(fit)` recognises a PT fit: the convergence summary
+  collapses to the cold chain, an extra row of panels shows swap
+  acceptance per pair over batches with the 0.234 asymptotic target as
+  a reference, and a hint fires when any adjacent pair averages below
+  10% swap acceptance ("Consider a denser temperature ladder").
+
 # gpumetropolis 0.2.0
 
 - **`gpu_metropolis(backend = "auto")` is now the default.** The selector
