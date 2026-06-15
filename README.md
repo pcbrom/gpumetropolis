@@ -359,6 +359,56 @@ the corresponding worked-case vignette is
 [`vignettes/m2_parallel_tempering.Rmd`](https://github.com/pcbrom/gpumetropolis/blob/main/vignettes/m2_parallel_tempering.Rmd),
 the first chapter of the package's living book of cases.
 
+### Where this package fits in the MCMC ecosystem
+
+The results above are textbook successes of parallel tempering, not
+algorithmic novelty: PT (Geyer 1991; Earl-Deem 2005) is the classical
+remedy for multimodal targets and any correct implementation recovers
+R-hat near 1 on the M2 cell. The value `gpumetropolis` adds is product
+design and portability, not a new sampling algorithm. The honest
+positioning against the wider MCMC ecosystem follows.
+
+**Where the established tools dominate**: for **differentiable
+unimodal targets in `d` greater than five (GLMs, hierarchical models,
+regression)** the gradient-based samplers of `Stan`, `PyMC` and
+`NumPyro` are dramatically more efficient than any random-walk
+Metropolis; ESS-per-second improvements of one to three orders of
+magnitude are routine. For **fast approximate inference** the
+variational paths through `Stan` (ADVI), `PyMC` (BBVI) or `INLA` (Rue
+et al. 2009) cost a small fraction of the MCMC wall-clock. For
+**mixture models with unknown number of components** reversible-jump
+MCMC (Richardson e Green 1997) or Dirichlet-process mixtures estimate
+the parameters and `k` jointly, which fixed-`k` tempering does not. For
+**likelihoods that are intractable** ABC and pseudo-marginal methods
+(Andrieu e Roberts 2009) are the right tool. The package does not
+compete on those axes and does not claim to.
+
+**Where `gpumetropolis` adds value**: the package is the right pick
+when the workflow needs:
+
+| Need | Why this package |
+|---|---|
+| **One kernel source across CPU, CUDA and Vulkan** | the CubeCL kernel and the Rust glue produce a single declaration that runs on all three; `Stan` requires CmdStanGPU for partial GPU coverage on OpenCL, `PyMC` requires the JAX backend dominated by NVIDIA, no other package matches the vendor-agnostic guarantee |
+| **Hundreds to thousands of parallel chains** | the registered factorial completes the 4096-chain cell that the other backends do not, and the many-chains axis is the natural GPU parallelism axis exploited by the block-per-chain kernel |
+| **Parallel tempering in one line** | `method = "pt"` is a built-in path; `Stan` and `PyMC` users typically hand-code the swap step or reach for external wrappers |
+| **A formula-based DSL for the log-likelihood** | the same R formula a user would already write becomes the kernel; no Stan or BUGS to translate to |
+
+**Honest verdict on the worked cases of the living book**: the M2 PT
+fit and the Gumbel-mixture fit shown in the two vignettes are
+**competitive, not state-of-the-art**. A custom Stan script with hand-
+coded tempering reaches comparable accuracy in comparable wall-clock
+on both cases. The advantage of `gpumetropolis` is workflow (one
+formula plus `method = "pt"` against custom Stan code) and portability
+(the same kernel runs on whatever GPU is on the host), not algorithmic
+superiority.
+
+The longer arc of the package, the application path of v0.5.0 through
+v0.8.0 (bivariate copula, marginal auto-selection, vine copula,
+synthesis), is where the design is intended to deliver something that
+no current single R package puts together end to end: dataset in,
+ranked Bayesian fits out, synthetic dataset out. The MCMC engine is
+the foundation, not the headline.
+
 The complete picture: `gpumetropolis` is fast in the regime it claims, many
 chains and an expensive log-density, and M3 shows it can win even with a
 single chain. It is not a faster sampler than a specialised algorithm where
