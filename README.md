@@ -279,37 +279,8 @@ The honest reading, model by model:
   speed, CUDA reaches 78 times the best competitor at 64 chains and is again
   the sole backend completing the 4096-chain cell.
 
-  Starting with v0.3.0, `gpu_metropolis(method = "pt")` adds parallel
-  tempering: each chain runs at its own temperature on the same target and an
-  adjacent-pair swap step shuttles states between the cold chain and the hot
-  ones. On the focused single-cell re-run of 2026-06-15 (`N = 400`, `C = 8`,
-  twenty replications), `gpumetropolis-cpu-pt` reaches **R-hat near 1.00**;
-  the random-walk gpumetropolis and `nimble` both stay at R-hat near 62 on
-  the same cell because their chains never cross modes. The honest cost is a
-  1.7x wall-clock factor over random walk for the host-side swap step and a
-  lower nominal ESS, since each cold-chain sample now pays the autocorrelation
-  of a true mode-crossing chain rather than the autocorrelation of a stuck
-  one. The full numbers and the harness are in
-  [`benchmark/m2_pt_summary.csv`](https://github.com/pcbrom/gpumetropolis/blob/main/benchmark/m2_pt_summary.csv)
-  and the focused re-run is recorded as amendment v0.9 of the protocol.
-
-  ![M2 pooled densities, RWM and PT and nimble](man/figures/m2_pt_densities.png)
-
-  The three pooled densities look almost identical: two narrow peaks at the
-  reference modes (dashed red). The verdict is in the title of each panel.
-  R-hat near 1.00 for parallel tempering says the cold chain visits both
-  modes within a single run; R-hat near 62 for the random-walk panels says
-  each chain stayed in its starting basin, and the pretty bimodal shape is
-  the artefact of overlaying eight stuck chains.
-
-  ![M2 traces, RWM and PT and nimble](man/figures/m2_pt_traces.png)
-
-  The traces tell the same story directly. The eight chains of the
-  random-walk runs and of `nimble` form flat lines at +3 and -3, with no
-  visible crossing across the 2000 post-warmup iterations. The cold chain
-  of the parallel-tempering run (black, the lowest-temperature chain by
-  construction) jumps repeatedly between basins, fed by the hot chains
-  (colour) which mix freely on their tempered targets.
+  The parallel-tempering path of v0.3.0 changes this picture. See the
+  next subsection.
 - **M4, the ill-conditioned Gaussian**, is the model where `gpumetropolis`
   loses, and the loss is stated plainly. H1 is supported for all eight
   backends. But `nimble` detects that the target is exactly Gaussian and
@@ -322,6 +293,71 @@ The honest reading, model by model:
   backend, since there is no data-parallel work to amortise the kernel launch.
   R-hat has median 1.10 across M4, the expected signature of slow random-walk
   mixing on a condition-98 geometry, uniform across backends.
+
+### Parallel tempering and the M2 mode-crossing trap
+
+The M2 paragraph above reports that the registered factorial gives every
+backend a high KS rejection rate on the bimodal target. The diagnostic in
+that report is the family-wise KS gate, which compares the pooled draws
+against the closed-form bimodal reference. The trap of that diagnostic is
+that pooling eight chains, each stuck in one of the two basins, produces a
+sample that already resembles the reference: half of the chains contribute
+the positive mode, half contribute the negative mode, and the pooled
+empirical CDF tracks the symmetric bimodal target closely. The pretty
+bimodal shape of the pooled draws is then the artefact of overlay, not the
+signature of correct mixing.
+
+The honest diagnostic for M2 is the split R-hat, which compares the
+within-chain variance and the between-chain variance. Stuck chains have a
+within-chain variance set by the spread inside one mode and a
+between-chain variance set by the spread between the two modes, and the
+ratio is large: R-hat reports the mismatch as a value far above one.
+
+The focused single-cell re-run of 2026-06-15 measures this directly. The
+cell is `N = 400` observations, `C = 8` chains, 4000 iterations per chain
+with 2000 discarded as warmup, twenty replications, comparing three
+adapters: `gpumetropolis-cpu` for the random-walk Metropolis baseline,
+`gpumetropolis-cpu-pt` for the `method = "pt"` path of v0.3.0, and
+`nimble` as the strongest M2 competitor of v0.7.
+
+| adapter | R-hat | ESS | ESS/s | wall-clock (s) |
+|---|---|---|---|---|
+| gpumetropolis-cpu (RWM) | 62.28 | 3525 | 27782 | 0.13 |
+| gpumetropolis-cpu-pt | **1.00** | 671 | 3007 | 0.23 |
+| nimble | 61.97 | 3652 | 26973 | 0.15 |
+
+Two figures make the verdict visible.
+
+![M2 pooled densities, RWM and PT and nimble](man/figures/m2_pt_densities.png)
+
+The three pooled densities look almost identical: two peaks at the
+reference modes (dashed red). The verdict is in the title of each panel.
+R-hat near 1.00 for parallel tempering says the cold chain visits both
+modes within a single run; R-hat near 62 for the random-walk panels says
+each chain stayed in its starting basin, and the bimodal shape of the
+pooled draws is the artefact of overlaying eight stuck chains.
+
+![M2 traces, RWM and PT and nimble](man/figures/m2_pt_traces.png)
+
+The traces tell the same story directly. The eight chains of the
+random-walk runs and of `nimble` form flat lines at +3 and -3, with no
+visible crossing across the 2000 post-warmup iterations. The cold chain
+of the parallel-tempering run, drawn in black in the centre panel and
+the lowest-temperature chain by construction, jumps repeatedly between
+basins, fed by the hot chains, drawn in colour, which mix freely on
+their tempered targets.
+
+The cost of the correct answer is a 1.7x wall-clock factor over random
+walk for the host-side swap step and a lower nominal effective sample
+size, since each cold-chain draw now pays the autocorrelation of a true
+mode-crossing chain rather than the autocorrelation of a stuck one. The
+full numbers and the harness are in
+[`benchmark/m2_pt_summary.csv`](https://github.com/pcbrom/gpumetropolis/blob/main/benchmark/m2_pt_summary.csv);
+the focused re-run is amendment v0.9 of
+[`EXPERIMENT_PROTOCOL.md`](https://github.com/pcbrom/gpumetropolis/blob/main/EXPERIMENT_PROTOCOL.md);
+the corresponding worked-case vignette is
+[`vignettes/m2_parallel_tempering.Rmd`](https://github.com/pcbrom/gpumetropolis/blob/main/vignettes/m2_parallel_tempering.Rmd),
+the first chapter of the package's living book of cases.
 
 The complete picture: `gpumetropolis` is fast in the regime it claims, many
 chains and an expensive log-density, and M3 shows it can win even with a
