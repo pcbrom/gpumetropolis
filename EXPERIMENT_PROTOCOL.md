@@ -447,3 +447,89 @@ independent streams. The ESS-per-second results and the H1 correctness
 conclusions are unaffected; a re-run on the corrected RNG would tighten the
 variance of the gpumetropolis rejection-rate estimates without changing a
 verdict.
+
+### v0.9, 2026-06-15: M2 focused re-run with parallel tempering
+
+Status of this amendment. Recorded after the focused re-run of 2026-06-15.
+The full registered M2 cell of section 4 stays the un-run target; this
+amendment documents a single-cell extended run that probes one specific
+question, whether `gpu_metropolis(method = "pt")` of the v0.3.0 release
+recovers the bimodal posterior that random-walk Metropolis cannot.
+
+The focused re-run. Three adapters were exercised on one M2 cell at
+`N = 400` observations, `C = 8` chains, 4000 iterations per chain with
+2000 discarded as warmup, twenty replications, seed scheme
+`20260200 + 10000 * replication`. The adapters are
+`gpumetropolis-cpu` (random-walk Metropolis, the M2 baseline of v0.7),
+`gpumetropolis-cpu-pt` (parallel tempering through the v0.3.0
+`method = "pt"` path with the default geometric ladder from 1 to 10 and
+`swap_every = max(n_chains, 10)`) and `nimble` (the M2 strongest
+competitor of the v0.7 run). The harness is at `benchmark/run_m2_pt.R`;
+the per-adapter aggregate is versioned at
+`benchmark/m2_pt_summary.csv`, and the per-replication CSV is generated
+at `benchmark/results/m2_pt/m2_pt_20260615.csv`, kept outside the
+repository in line with the v0.7 convention of versioning only the
+cell-level summary.
+
+Results, averaged over the twenty replications:
+
+| adapter | KS p-value | R-hat | ESS | ESS per second | wall-clock (s) |
+|---|---|---|---|---|---|
+| gpumetropolis-cpu | 0.54 | 62.28 | 3525 | 27782 | 0.13 |
+| gpumetropolis-cpu-pt | 0.18 | 1.00 | 671 | 3007 | 0.23 |
+| nimble | 0.45 | 61.97 | 3652 | 26973 | 0.15 |
+
+Reading. The M2 posterior is symmetric and bimodal; the natural
+diagnostic of cross-mode mixing is the split R-hat, not the pooled KS
+test. The pooled KS test sees a symmetric mixture of within-mode draws
+that resembles the reference even when each chain is stuck in one mode,
+which is why both `gpumetropolis-cpu` and `nimble` look passable on KS.
+Their R-hat of 62 is the honest report: the chains never mix between
+modes, and every per-chain estimate is biased. Only `gpumetropolis-cpu-pt`
+gets to R-hat near 1, because the swap step shuttles states between the
+cold chain and the hot chains. Its ESS of 671 is the honest count: each
+post-warmup draw of the cold chain is actually from the joint bimodal
+posterior, paying autocorrelation across mode-crossing for that
+correctness.
+
+The nominal ESS per second of the random-walk adapters, 27782 against
+3007 for parallel tempering, compares the throughput of stuck chains to
+that of a mixing chain. The honest comparison conditions on
+correctness: at R-hat 62 the effective sample size of valid posterior
+draws is zero, so the random-walk adapters' valid ESS per second is
+zero. Parallel tempering pays a 1.7x wall-clock factor over the
+random-walk baseline (0.23 s against 0.13 s, the cost of the host-side
+swap step between batches) and that buys the R-hat-near-1 verdict.
+
+Mode coverage. The per-replication mode coverage column in the CSV
+is `NA`: the script records adapter-level metrics rather than the raw
+draws across replications. A future revision of the harness will store
+draws per replication so per-replication mode coverage can be
+recomputed; the M2 v0.7 run already provides the within-chain mode
+counts that, with the v0.3.0 R-hat numbers above, document the
+mode-crossing improvement.
+
+Design choices recorded for this focused re-run.
+
+- The cell is intentionally narrow, one `N`, one `C`, twenty
+  replications. The full registered factorial of section 4, twenty
+  replications per cell across all `N` and `C`, remains the un-run
+  target; this re-run is not a substitute.
+- The competitor set is reduced to `nimble`, the strongest M2
+  competitor of v0.7. `MCMCpack`, `mcmc`, `BayesianTools` and Stan are
+  omitted because their v0.7 vereditos on this cell do not change with
+  the addition of parallel tempering on the gpumetropolis side.
+- The proposal scale is `2.4 * sigma / sqrt(N)`, the M2 default of
+  `m2_bimodal.R`. Per-chain adaptation in the v0.3.0 path refines it
+  from that seed; the warmup acceptance per chain is recorded in
+  `fit$adaptation$accept_history`.
+- Parallel tempering activates `adapt = TRUE` by default; the cold
+  chain inherits a proposal scale tuned to its tempered geometry, and
+  the hot chains inherit larger ones, as the v0.3.0 release notes
+  describe.
+
+What this amendment does not change. The full M2 to M4 factorial of v0.7
+is not re-run. The v0.7 vereditos on M3 and M4 stand. The v0.3.0
+release notes explain the parallel-tempering path; this amendment
+records the focused empirical evidence on the one cell where it
+matters most.

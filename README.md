@@ -236,6 +236,20 @@ The honest reading, model by model:
   the lowest rejection rate, and `BayesianTools` fails the model outright. In
   speed, CUDA reaches 78 times the best competitor at 64 chains and is again
   the sole backend completing the 4096-chain cell.
+
+  Starting with v0.3.0, `gpu_metropolis(method = "pt")` adds parallel
+  tempering: each chain runs at its own temperature on the same target and an
+  adjacent-pair swap step shuttles states between the cold chain and the hot
+  ones. On the focused single-cell re-run of 2026-06-15 (`N = 400`, `C = 8`,
+  twenty replications), `gpumetropolis-cpu-pt` reaches **R-hat near 1.00**;
+  the random-walk gpumetropolis and `nimble` both stay at R-hat near 62 on
+  the same cell because their chains never cross modes. The honest cost is a
+  1.7x wall-clock factor over random walk for the host-side swap step and a
+  lower nominal ESS, since each cold-chain sample now pays the autocorrelation
+  of a true mode-crossing chain rather than the autocorrelation of a stuck
+  one. The full numbers and the harness are in
+  [`benchmark/m2_pt_summary.csv`](https://github.com/pcbrom/gpumetropolis/blob/main/benchmark/m2_pt_summary.csv)
+  and the focused re-run is recorded as amendment v0.9 of the protocol.
 - **M4, the ill-conditioned Gaussian**, is the model where `gpumetropolis`
   loses, and the loss is stated plainly. H1 is supported for all eight
   backends. But `nimble` detects that the target is exactly Gaussian and

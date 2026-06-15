@@ -19,7 +19,7 @@ source("benchmark/models/m2_bimodal.R")
 
 run_m2_cell <- function(adapter_name, spec, N, n_chains, n_iter, reps,
                         seed_base = 20260200L) {
-  adapter <- adapters_v2[[adapter_name]]
+  adapter <- cpu_adapters[[adapter_name]]
   if (is.null(adapter)) {
     stop("adapter '", adapter_name, "' is not registered.", call. = FALSE)
   }
@@ -31,7 +31,7 @@ run_m2_cell <- function(adapter_name, spec, N, n_chains, n_iter, reps,
                    seed = seed)
     gate <- h1_gate_ms(res$draws,
                        ref_fn = function(n) spec$ref_sample(data, n))
-    ess <- mean_ess(res$draws)
+    ess <- mean_total_ess(res$draws)
     rows[[r]] <- data.frame(
       adapter = adapter_name,
       rep = r,
