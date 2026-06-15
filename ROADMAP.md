@@ -121,3 +121,36 @@ discrete deliverable, validated before the next opens.
 
 Tier 2 (fused kernels for common likelihoods) and Tier 5 (vector and matrix
 DSL) become optional, scheduled only when a real user case pulls them.
+
+## Post-1.0.0 trajectory
+
+Through 1.0.0 the identity of the package is the deliberate one of
+decisions 1 to 9 in `BRIEFING.md`: a portable Metropolis-Hastings sampler
+that becomes a copula synthesis engine. The package is intentionally not
+competing on the algorithmic state of the art over that window. The
+positioning section of the README states the trade explicitly: Stan,
+PyMC and NumPyro dominate differentiable unimodal targets through
+HMC/NUTS, and `gpumetropolis` makes no claim against them in that regime.
+
+After 1.0.0 the orientation shifts. The post-1.0.0 trajectory aims at
+genuine state-of-the-art status in the narrower intersection that the
+package occupies: **MCMC plus vendor-agnostic GPU portability plus
+copula-driven synthesis**. Two candidate directions, to be decided when
+the 1.0.0 release lands:
+
+- **HMC and NUTS** as a parallel sampler in the package, which would
+  reopen decision 3 of `BRIEFING.md` (automatic differentiation). The
+  cost is the AD machinery on the bytecode and the kernel; the benefit
+  is matching `Stan` on differentiable targets while keeping the
+  many-chains GPU axis.
+- **Hold the no-AD line and double down on the niche**: make the copula
+  synthesis path through vines and parallel tempering the best
+  implementation in any language, on GPU, with explicit support for
+  large `d` through vine decomposition and large `n` through the
+  data-parallel kernel. The state of the art here is currently
+  scattered across small specialised packages; a single coherent path
+  has room.
+
+The concrete choice between these two directions is recorded as a
+post-1.0.0 decision, after 2026-11-02. The interim is the v0.4.0
+through v0.8.0 march already on the calendar.
