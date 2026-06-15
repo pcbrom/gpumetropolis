@@ -41,16 +41,59 @@ make_gpumetropolis_adapter <- function(be) {
     elapsed <- bench_elapsed(
       fit <- gpumetropolis::gpu_metropolis(
         model, data = data_list, init = init,
-        proposal_sd = spec$proposal_sd(data), n_iter = n_iter, seed = seed,
+        proposal_sd = spec$proposal_sd(data),
+        n_iter = n_iter, warmup = n_warmup, seed = seed,
         backend = be
       )
     )
-    draws <- fit$draws[seq.int(n_warmup + 1L, n_iter), , , drop = FALSE]
+    draws <- fit$draws
     dim(draws) <- c(n_keep, n_chains, spec$dim)
     list(
       draws = draws, time_sec = elapsed,
       meta = list(backend = paste0("gpumetropolis-", be),
                   version = as.character(utils::packageVersion("gpumetropolis")))
+    )
+  }
+}
+
+# gpumetropolis in parallel-tempering mode. The cold chain (T = 1) is the
+# only one that samples the target; the hot chains are auxiliary and feed
+# the cold one through swaps. The adapter returns the cold chain
+# replicated across `n_chains` slots so the standard harness diagnostics
+# (R-hat, ESS) treat the chain count consistently with the other
+# backends. A factor-aware harness that distinguishes the cold chain
+# from the hot ones is a future refinement.
+make_gpumetropolis_pt_adapter <- function(be) {
+  force(be)
+  function(spec, data, n_iter, n_chains, seed) {
+    n_warmup <- n_iter %/% 2L
+    n_keep <- n_iter - n_warmup
+    model <- gpumetropolis::gpum_model(spec$gpum_loglik, params = spec$params,
+                                       data = spec$data_names)
+    init <- spec$init(data, n_chains)
+    data_list <- stats::setNames(list(data), spec$data_names)
+    fit <- NULL
+    elapsed <- bench_elapsed(
+      fit <- gpumetropolis::gpu_metropolis(
+        model, data = data_list, init = init,
+        proposal_sd = spec$proposal_sd(data),
+        n_iter = n_iter, warmup = n_warmup,
+        method = "pt", seed = seed, backend = be
+      )
+    )
+    cold <- fit$draws[, 1L, , drop = FALSE]
+    draws <- array(rep(cold, n_chains),
+                   dim = c(dim(cold)[1L], n_chains, spec$dim))
+    list(
+      draws = draws, time_sec = elapsed,
+      meta = list(backend = paste0("gpumetropolis-", be, "-pt"),
+                  version = as.character(utils::packageVersion("gpumetropolis")),
+                  swap_history_mean =
+                    if (!is.null(fit$adaptation$swap_history)) {
+                      mean(fit$adaptation$swap_history, na.rm = TRUE)
+                    } else {
+                      NA_real_
+                    })
     )
   }
 }
@@ -210,6 +253,9 @@ cpu_adapters <- list(
   "gpumetropolis-cpu" = make_gpumetropolis_adapter("cpu"),
   "gpumetropolis-cuda" = make_gpumetropolis_adapter("cuda"),
   "gpumetropolis-vulkan" = make_gpumetropolis_adapter("vulkan"),
+  "gpumetropolis-cpu-pt" = make_gpumetropolis_pt_adapter("cpu"),
+  "gpumetropolis-cuda-pt" = make_gpumetropolis_pt_adapter("cuda"),
+  "gpumetropolis-vulkan-pt" = make_gpumetropolis_pt_adapter("vulkan"),
   "mcmc" = adapter_mcmc,
   "MCMCpack" = adapter_mcmcpack,
   "nimble" = adapter_nimble,
