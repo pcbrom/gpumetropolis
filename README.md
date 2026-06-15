@@ -292,6 +292,24 @@ The honest reading, model by model:
   one. The full numbers and the harness are in
   [`benchmark/m2_pt_summary.csv`](https://github.com/pcbrom/gpumetropolis/blob/main/benchmark/m2_pt_summary.csv)
   and the focused re-run is recorded as amendment v0.9 of the protocol.
+
+  ![M2 pooled densities, RWM and PT and nimble](man/figures/m2_pt_densities.png)
+
+  The three pooled densities look almost identical: two narrow peaks at the
+  reference modes (dashed red). The verdict is in the title of each panel.
+  R-hat near 1.00 for parallel tempering says the cold chain visits both
+  modes within a single run; R-hat near 62 for the random-walk panels says
+  each chain stayed in its starting basin, and the pretty bimodal shape is
+  the artefact of overlaying eight stuck chains.
+
+  ![M2 traces, RWM and PT and nimble](man/figures/m2_pt_traces.png)
+
+  The traces tell the same story directly. The eight chains of the
+  random-walk runs and of `nimble` form flat lines at +3 and -3, with no
+  visible crossing across the 2000 post-warmup iterations. The cold chain
+  of the parallel-tempering run (black, the lowest-temperature chain by
+  construction) jumps repeatedly between basins, fed by the hot chains
+  (colour) which mix freely on their tempered targets.
 - **M4, the ill-conditioned Gaussian**, is the model where `gpumetropolis`
   loses, and the loss is stated plainly. H1 is supported for all eight
   backends. But `nimble` detects that the target is exactly Gaussian and
