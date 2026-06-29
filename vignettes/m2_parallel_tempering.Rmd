@@ -114,8 +114,11 @@ optimum, which is harmless: a symmetric target makes most swaps trivial.
 
 ## Inspecting the cold chain directly
 
-The post-warmup cold chain is the slice `fit_pt$draws[, 1L, ]`. A histogram
-makes the two modes plain:
+Column 1 of the draws array is the cold chain, the chain at temperature
+$T = 1$, and it is the only chain that targets the actual posterior; the other
+columns are auxiliary hot chains that feed it through swaps and are not for
+inference. So the post-warmup posterior is the slice `fit_pt$draws[, 1L, ]`. A
+histogram makes the two modes plain:
 
 ```{r pt-hist}
 cold <- fit_pt$draws[, 1L, "mu"]
@@ -123,6 +126,17 @@ hist(cold, breaks = 60, freq = FALSE,
      main = "Posterior of mu under parallel tempering (cold chain)",
      xlab = "mu", col = "grey85", border = "white")
 abline(v = c(-3, 3), col = "red", lty = 2)
+```
+
+A bimodal posterior is also where the credible interval `hdi()` must be read
+with care. A single 95% interval here spans the gap between the two modes,
+including the low-density region around zero that the chain rarely visits, so
+the interval is wide and not a summary of either mode. The lesson is general:
+`hdi()` is a one-interval summary and is only faithful when the posterior is
+unimodal.
+
+```{r pt-hdi}
+hdi(cold, ci = 0.95)         # spans both modes: not a summary of either one
 ```
 
 A trace shows that the cold chain repeatedly crosses zero, a clear sign of

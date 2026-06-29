@@ -35,7 +35,10 @@ with $b = 0.1$. The first coordinate is wide, with standard deviation near
 local correlation between $x_1$ and $x_2$ changes sign and strength as $x_1$
 moves along the ridge. No single diagonal proposal can match a geometry whose
 correlation is different at every point of the ridge. The target has no data;
-it is declared through the prior.
+it is declared through the prior. This is the general way to sample an
+arbitrary target with no observed data: set `loglik = ~ 0`, so the
+log-likelihood contributes nothing, and put the whole target in `prior`. The
+sampler then draws from the prior, which here is the banana.
 
 ```{r model}
 library(gpumetropolis)
@@ -116,11 +119,15 @@ effective sample size; the random-walk panel covers the ridge unevenly, with
 the higher R-hat that is the signature of chains still mixing across the bend.
 The banana is a hard target and neither run is fully converged at 8000
 iterations, so both gain from a longer run; the point of the comparison is
-the gap between them at equal cost. The one-call diagnostic shows the
-per-chain acceptance and the ensemble spread per dimension over the batches,
-the quantity that keeps the difference proposal alive.
+the gap between them at equal cost. The one-call diagnostic prints the
+per-parameter table with the convergence verdict and opens a panel per
+parameter; for a Differential Evolution fit it adds a row with the per-chain
+acceptance and the ensemble spread per dimension over the batches, the
+quantity that keeps the difference proposal alive. Reading that row: the
+spread should stay well above zero, a spread collapsing toward zero in a
+dimension is the warning that the difference vectors have degenerated there.
 
-```{r diagnose, eval = FALSE}
+```{r diagnose, fig.alt = "Differential Evolution diagnostic panels for the banana fit.", fig.width = 7, fig.height = 6}
 gpum_diagnose(fit_de)
 ```
 

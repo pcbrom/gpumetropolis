@@ -127,9 +127,10 @@ diptest::dip.test(y)$p.value
 ```
 
 That is the case the catalogue worries about: the dip test gives the
-"unimodal" verdict, but the WAIC of a mixture is decisively better
-than the WAIC of a single Gumbel because the mixture matches the joint
-behaviour at both tails.
+"unimodal" verdict, yet the data come from a mixture. The decision
+between a single Gumbel and a mixture is settled below by WAIC, the
+predictive criterion the package computes from the pointwise
+log-likelihood, once both models are fitted to this sample.
 
 ### The mixture model in the DSL
 
@@ -181,6 +182,39 @@ fit_mix <- gpu_metropolis(
 fit_mix
 ```
 
+### Settling the choice by WAIC
+
+The promise made above, that a mixture predicts this sample better than a
+single Gumbel, is now computed rather than asserted. The single Gumbel is
+fitted to the same simulated `y`, and `gpum_waic()` reads the predictive
+accuracy of each from its pointwise log-likelihood. Both log-likelihoods are
+normalised (the single Gumbel carries its `- lb` term, the mixture its
+`/ exp(lb)` factors), so the comparison is valid; lower WAIC is the better
+predictor.
+
+```{r mix-waic}
+fit_single_y <- gpu_metropolis(
+  model_gumbel, data = list(y = y),
+  proposal_sd = c(0.5, 0.1),
+  init = matrix(c(median(y), log(IQR(y) / 2)), nrow = 4, ncol = 2,
+                byrow = TRUE),
+  n_iter = 4000, n_chains = 4, seed = 1, backend = "cpu"
+)
+waic_single <- gpum_waic(fit_single_y, data = list(y = y))
+waic_mix    <- gpum_waic(fit_mix, data = list(y = y))
+c(single = waic_single$waic, mixture = waic_mix$waic)
+```
+
+The mixture has the lower WAIC, the verdict the dip test could not give. The
+WAIC is invariant to the label switching of the next section, so it is read
+here directly from the cold-chain draws. `gpum_loo()` reports the same ranking
+through Pareto-smoothed leave-one-out cross-validation, with the Pareto `k`
+diagnostic flagging any observation whose estimate is unreliable.
+
+```{r mix-loo}
+if (requireNamespace("loo", quietly = TRUE)) gpum_loo(fit_mix, data = list(y = y))
+```
+
 ### Identifiability post-processing
 
 The mixture log-density is invariant under swapping component 1 and
@@ -217,30 +251,24 @@ exact balance.
 
 ### Posterior predictive check
 
-A direct visual check: sample `n_years` new annual maxima from the
-posterior of the fitted mixture and compare the empirical distribution
-of those samples against the observed data.
+A direct visual check: generate new annual maxima from the fitted mixture and
+compare their distribution against the observed data. `gpum_ppc()` draws the
+posterior predictive sample, with the family's simulator passed in one line
+(pick a component by its weight, then a Gumbel draw), and
+`gpum_density_compare()` overlays the densities. Label switching does not
+matter here, since the predictive distribution is the same in either labelling.
 
 ```{r ppc, fig.width = 7, fig.height = 4}
-set.seed(99)
-n_ppc <- 500
-rep_idx <- sample(seq_len(nrow(draws)), n_ppc, replace = TRUE)
-ppc_samples <- vapply(rep_idx, function(i) {
-  pi <- p[i]
-  z  <- rbinom(n_years, 1, 1 - pi)
-  ifelse(z == 1,
-         rgumbel(n_years, mu_warm[i], beta_warm[i]),
-         rgumbel(n_years, mu_cool[i], beta_cool[i]))
-}, numeric(n_years))
-ppc_pooled <- as.vector(ppc_samples)
-
-plot(density(ppc_pooled), col = "red", lwd = 2,
-     main = "Posterior predictive vs observed",
-     xlab = "annual maximum (deg)", ylim = c(0, 0.13))
-lines(density(y), col = "black", lwd = 2)
-rug(y, col = "black")
-legend("topleft", lty = 1, lwd = 2, col = c("black", "red"),
-       legend = c("observed", "PPC"), bty = "n")
+pp <- gpum_ppc(fit_mix, function(q) {
+  if (stats::runif(1) < 1 / (1 + exp(-q["eta_p"]))) {
+    q["mu1"] - exp(q["lb1"]) * log(-log(stats::runif(1)))
+  } else {
+    q["mu2"] - exp(q["lb2"]) * log(-log(stats::runif(1)))
+  }
+})
+gpum_density_compare(y, list(mixture = pp),
+                     main = "Posterior predictive vs observed",
+                     xlab = "annual maximum (deg)")
 ```
 
 The two densities overlap; the slight differences at the two peaks are

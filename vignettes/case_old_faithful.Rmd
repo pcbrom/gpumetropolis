@@ -1,0 +1,388 @@
+---
+title: "A complete case on real data: the Old Faithful geyser"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{A complete case on real data: the Old Faithful geyser}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>",
+                      fig.width = 7, fig.height = 4.2)
+Sys.setenv(RAYON_NUM_THREADS = "2")
+```
+
+This chapter is a complete study on a real data set, exercising every part of
+the package on one classic problem. The data are the 272 eruptions of the Old
+Faithful geyser recorded in `datasets::faithful`: for each eruption, its
+duration and the waiting time to the next one. Two questions organise the
+study, and each calls a different half of the toolkit.
+
+The first question is regular and the tools answer it cleanly: how does the
+waiting time depend on the eruption duration? A linear-Gaussian regression has
+a smooth, single-peaked posterior, so it is the setting where Differential
+Evolution, the Cramer-Rao reference and the joint-posterior plots are at home.
+
+The second question is irregular and teaches where the same tools stop: the
+eruption durations themselves split into two groups, short and long. A
+two-component mixture has a multimodal posterior, so it is the setting for
+parallel tempering and for predictive comparison, and the setting where the
+Cramer-Rao reference correctly refuses to report a number.
+
+```{r data, fig.height = 3.4}
+library(gpumetropolis)
+d <- faithful
+op <- graphics::par(mfrow = c(1, 2), mar = c(4, 4, 2, 1))
+plot(d$eruptions, d$waiting, pch = 19, col = "grey50", cex = 0.6,
+     xlab = "eruption (min)", ylab = "waiting (min)",
+     main = "Waiting against duration")
+hist(d$eruptions, breaks = 25, col = "grey85", border = "white",
+     main = "Eruption durations", xlab = "eruption (min)")
+graphics::par(op)
+```
+
+# Part 1: a regular regression
+
+## Declaring and fitting the model
+
+The model is `waiting = a + b * eruptions + Normal(0, sigma)`. The three
+parameters are the intercept `a`, the slope `b` and the log standard deviation
+`ls = log(sigma)`, the last unbounded so the sampler proposes freely. The
+log-likelihood is the Gaussian density up to the additive constant the sampler
+does not need.
+
+```{r reg-model}
+reg <- gpum_model(
+  loglik = ~ -0.5 * ((waiting - a - b * eruptions) / exp(ls))^2 - ls,
+  params = c("a", "b", "ls"),
+  data   = c("waiting", "eruptions")
+)
+dat <- list(waiting = d$waiting, eruptions = d$eruptions)
+```
+
+The slope and intercept of a regression are strongly correlated in the
+posterior, the geometry where a diagonal random walk mixes slowly and the
+Differential Evolution proposal aligns itself for free. We fit both and read
+the effective sample size to see the difference.
+
+```{r reg-fit}
+fit_de  <- gpu_metropolis(reg, data = dat, n_iter = 8000, n_chains = 16,
+                          method = "de", seed = 1, backend = "cpu")
+fit_rwm <- gpu_metropolis(reg, data = dat, n_iter = 8000, n_chains = 16,
+                          method = "rwm", seed = 1, backend = "cpu")
+c(rwm = ess(fit_rwm$draws[, , "b"], 0), de = ess(fit_de$draws[, , "b"], 0))
+```
+
+## Checking convergence
+
+`gpum_diagnose()` rolls the per-parameter R-hat, effective sample size and
+Monte Carlo error into one table with a verdict, and opens a panel per
+parameter. Read it as a pass when R-hat is below 1.01 and the effective sample
+size is above 400 for every parameter.
+
+```{r reg-diagnose, fig.width = 8, fig.height = 6}
+gpum_diagnose(fit_de)
+```
+
+The two samplers target the same posterior, so their draws should be
+distributionally the same. `ks_equivalence()` checks that with a
+Kolmogorov-Smirnov test after thinning to the effective sample size; a large
+p-value and `equivalent = TRUE` confirm the agreement.
+
+```{r reg-ks}
+ks_equivalence(fit_de$draws[, , "b"], fit_rwm$draws[, , "b"])
+```
+
+## The joint posterior
+
+The correlation between intercept and slope is the point of a regression
+posterior. `gpum_pairs()` shows the marginals with their highest density
+intervals on the diagonal and the joint draws with their credible-region
+contour off it; `gpum_surface()` shows the same density of a chosen pair as
+level curves and as a 3D surface.
+
+```{r reg-pairs, fig.width = 7, fig.height = 6}
+gpum_pairs(fit_de, level = 0.95)
+```
+
+```{r reg-surface, fig.width = 7, fig.height = 4.2}
+gpum_surface(fit_de, c("a", "b"), type = "both")
+```
+
+## The Cramer-Rao reference
+
+This model is regular and Gaussian, so the posterior should match the
+information bound. `gpum_crlb()` forms the observed Fisher information by a
+finite-difference Hessian of the log-likelihood and inverts it; the standard
+deviations it reports should equal the frequentist standard errors of `lm()`.
+
+```{r reg-crlb}
+cr <- gpum_crlb(fit_de, data = dat)
+cr
+lm_fit <- lm(waiting ~ eruptions, data = d)
+rbind(gpum_crlb = cr$crlb_sd[1:2],
+      lm_se     = coef(summary(lm_fit))[, "Std. Error"])
+```
+
+```{r reg-crlb-bars, fig.width = 6, fig.height = 4}
+plot(cr)
+```
+
+## Deciding the relationship
+
+Does the waiting time depend on the duration at all? The decision is read from
+the posterior of the slope `b`. `gpum_hypothesis()` gives the posterior
+probability that `b` exceeds zero; `hdi()` gives its credible interval; and
+`gpum_rope()` asks whether `b` is practically different from zero against a
+region of practical equivalence, a band of slopes too small to matter.
+
+```{r reg-decide}
+gpum_hypothesis(fit_de, "b", lower = 0)
+hdi(as.vector(fit_de$draws[, , "b"]), 0.95)
+rope_b <- gpum_rope(fit_de, "b", rope = 0.5, null = 0)
+rope_b
+```
+
+```{r reg-rope-fig, fig.width = 7, fig.height = 4.2}
+plot(rope_b)
+```
+
+## Weighing the evidence for a slope
+
+The hypothesis above is a statement about the posterior; the Bayes factor is a
+statement about the evidence, comparing the model with a slope to the model
+without one. Both need a proper prior, so we attach weak normal priors and
+compute the marginal likelihood of each by thermodynamic integration.
+
+```{r reg-bf}
+reg_slope <- gpum_model(
+  loglik = ~ -0.5 * ((waiting - a - b * eruptions) / exp(ls))^2 - ls,
+  params = c("a", "b", "ls"), data = c("waiting", "eruptions"),
+  prior  = ~ -0.5 * (a / 80)^2 - 0.5 * (b / 40)^2 - 0.5 * ((ls - 2.3) / 1)^2
+)
+reg_flat <- gpum_model(
+  loglik = ~ -0.5 * ((waiting - a) / exp(ls))^2 - ls,
+  params = c("a", "ls"), data = "waiting",
+  prior  = ~ -0.5 * (a / 80)^2 - 0.5 * ((ls - 2.3) / 1)^2
+)
+bf <- gpum_bayes_factor(reg_slope, reg_flat, data = dat,
+                        n_rungs = 12L, n_iter = 2500L, n_chains = 8L, seed = 1L)
+bf
+```
+
+```{r reg-bf-fig, fig.width = 6, fig.height = 4}
+plot(bf)
+```
+
+The evidence for a slope is overwhelming, as expected from a scatter this
+clean; the Bayes factor and the posterior probability agree, by different
+routes.
+
+## Head-to-head against the established packages
+
+How does `gpumetropolis` stand against the samplers already in use, on this
+real regression? We fit `waiting ~ eruptions` with each and read the effective
+sample per second, computed uniformly with `coda`, and the recovered slope as
+the agreement check. Each competitor is guarded, so a missing one is skipped.
+
+```{r h2h, message = FALSE, warning = FALSE}
+have <- function(p) requireNamespace(p, quietly = TRUE)
+ess_ps <- function(dr, secs) as.numeric(coda::effectiveSize(dr)) / max(secs, 0.02)
+N <- 30000L; yv <- d$waiting; xv <- d$eruptions; nobs <- length(yv)
+rows <- list()
+if (have("coda")) {
+  t <- system.time(fg <- gpu_metropolis(reg, data = dat, n_iter = N, n_chains = 8,
+        method = "de", seed = 1, backend = "cpu"))["elapsed"]
+  rows[["gpumetropolis"]] <- c(ess_ps(as.vector(fg$draws[, , "b"]), t), unname(t), mean(fg$draws[, , "b"]))
+  if (have("MCMCpack")) rows[["MCMCpack"]] <- tryCatch({
+    t <- system.time(f <- MCMCpack::MCMCregress(waiting ~ eruptions, data = d, mcmc = N, verbose = 0))["elapsed"]
+    c(ess_ps(f[, "eruptions"], t), unname(t), mean(f[, "eruptions"])) }, error = function(e) rep(NA, 3))
+  if (have("mcmc")) rows[["mcmc"]] <- tryCatch({
+    lp <- function(th) sum(dnorm(yv, th[1] + th[2] * xv, exp(th[3]), log = TRUE)) - 0.5 * (th[1] / 80)^2 - 0.5 * (th[2] / 50)^2
+    t <- system.time(o <- mcmc::metrop(lp, c(34, 11, 1.8), nbatch = N, scale = c(2, 0.6, 0.05)))["elapsed"]
+    c(ess_ps(o$batch[, 2], t), unname(t), mean(o$batch[, 2])) }, error = function(e) rep(NA, 3))
+  if (have("nimble")) rows[["nimble"]] <- tryCatch({
+    suppressMessages(library(nimble))
+    code <- nimbleCode({ for (i in 1:n) { mu[i] <- a + b * x[i]; y[i] ~ dnorm(mu[i], sd = s) }
+      a ~ dnorm(0, sd = 80); b ~ dnorm(0, sd = 50); s ~ dunif(0, 50) })
+    t <- system.time({
+      md <- nimbleModel(code, constants = list(n = nobs), data = list(y = yv, x = xv),
+              inits = list(a = 34, b = 11, s = 6)); cm <- compileNimble(md)
+      mc <- buildMCMC(configureMCMC(md, monitors = c("a", "b", "s")))
+      cmc <- compileNimble(mc, project = md); sm <- runMCMC(cmc, niter = N, nburnin = 0, progressBar = FALSE)
+    })["elapsed"]
+    c(ess_ps(sm[, "b"], t), unname(t), mean(sm[, "b"])) }, error = function(e) rep(NA, 3))
+  if (have("BayesianTools")) rows[["BayesianTools"]] <- tryCatch({
+    ll <- function(par) sum(dnorm(yv, par[1] + par[2] * xv, exp(par[3]), log = TRUE))
+    su <- BayesianTools::createBayesianSetup(ll, lower = c(0, 0, 0), upper = c(80, 25, 3))
+    t <- system.time(o <- BayesianTools::runMCMC(su, settings = list(iterations = N, message = FALSE)))["elapsed"]
+    s <- as.matrix(BayesianTools::getSample(o, coda = TRUE))
+    c(ess_ps(s[, 2], t), unname(t), mean(s[, 2])) }, error = function(e) rep(NA, 3))
+  if (have("cmdstanr")) rows[["Stan"]] <- tryCatch({
+    sc <- "data{int n; vector[n] y; vector[n] x;} parameters{real a; real b; real<lower=0> sigma;} model{ y ~ normal(a + b*x, sigma); a ~ normal(0,80); b ~ normal(0,50);}"
+    mod <- cmdstanr::cmdstan_model(cmdstanr::write_stan_file(sc))
+    t <- system.time(sf <- mod$sample(data = list(n = nobs, y = yv, x = xv), chains = 1,
+        iter_sampling = N, iter_warmup = 1000, refresh = 0, show_messages = FALSE))["elapsed"]
+    dr <- as.numeric(sf$draws("b", format = "draws_matrix")); c(ess_ps(dr, t), unname(t), mean(dr)) }, error = function(e) rep(NA, 3))
+}
+comp <- as.data.frame(do.call(rbind, rows)); names(comp) <- c("ESS_per_sec", "wall_sec", "slope")
+comp <- comp[!is.na(comp$ESS_per_sec), ]; comp <- comp[order(-comp$ESS_per_sec), ]
+round(comp, 2)
+```
+
+The verdict mirrors the boundary the package draws honestly: every sampler
+recovers the same slope, so they agree; in this regime, a small data set with
+one chain, the leader on effective sample per second is
+`r if (exists("comp")) rownames(comp)[1] else "a specialised sampler"`, a
+specialised conjugate sampler against which a generic random walk does not
+claim to win. The advantage of `gpumetropolis` is the many-chains and
+large-data regime of the registered benchmark, and the portability of one
+kernel across CPU and GPU. The consolidated table of what each package
+delivers is in the `case_mtcars` chapter.
+
+# Part 2: an irregular mixture
+
+## The bimodal target
+
+The eruption durations are not one population but two, a short group near two
+minutes and a long group near four and a quarter. A two-component Gaussian
+mixture captures that, with a weight `w = 1 / (1 + exp(-eta))` on the first
+component and a mean and log scale for each.
+
+```{r mix-model}
+mix <- gpum_model(
+  loglik = ~ log(
+      (1 / (1 + exp(-eta))) *
+        exp(-0.5 * ((x - mu1) / exp(ls1))^2) / exp(ls1)
+    + (1 - 1 / (1 + exp(-eta))) *
+        exp(-0.5 * ((x - mu2) / exp(ls2))^2) / exp(ls2)),
+  params = c("eta", "mu1", "ls1", "mu2", "ls2"), data = "x"
+)
+xdat <- list(x = d$eruptions)
+```
+
+## Why the random walk fails, and the Cramer-Rao refusal
+
+A mixture posterior has two equivalent labellings (the two components can swap
+with no change in likelihood), so it is genuinely multimodal. Chains started
+in different labellings stay in them, and the split R-hat is far above one.
+
+```{r mix-rwm}
+init <- cbind(eta = rnorm(8, 0, 0.5),
+              mu1 = c(rep(2, 4), rep(4.3, 4)),    # half the chains in each labelling
+              ls1 = rep(log(0.3), 8),
+              mu2 = c(rep(4.3, 4), rep(2, 4)),
+              ls2 = rep(log(0.4), 8))
+fit_mix_rwm <- gpu_metropolis(mix, data = xdat, init = init,
+                              proposal_sd = c(0.2, 0.1, 0.1, 0.1, 0.1),
+                              n_iter = 6000, method = "rwm", seed = 3,
+                              backend = "cpu")
+max(vapply(c("mu1", "mu2"),
+           function(p) rhat(fit_mix_rwm$draws[, , p], 0), numeric(1)))
+```
+
+Because the posterior is multimodal, the Cramer-Rao reference does not apply,
+and `gpum_crlb()` says so rather than report a misleading number: its R-hat
+guard catches the non-convergence here.
+
+```{r mix-crlb}
+gpum_crlb(fit_mix_rwm, data = xdat)
+```
+
+## Parallel tempering recovers both components
+
+Parallel tempering runs each chain at its own temperature and swaps states
+between them, so the cold chain crosses between labellings instead of sticking.
+That crossing is correct sampling, but it makes the raw mean of `mu1`
+meaningless: averaged over both labellings it lands between the two true means.
+The fix is a canonical labelling, here `mu1 < mu2`, applied draw by draw before
+the components are read.
+
+```{r mix-pt}
+fit_mix <- gpu_metropolis(mix, data = xdat, init = init,
+                          proposal_sd = c(0.2, 0.1, 0.1, 0.1, 0.1),
+                          n_iter = 6000, method = "pt", seed = 2,
+                          backend = "cpu")
+cold <- fit_mix$draws[, 1L, , drop = TRUE]   # cold chain, the posterior
+swap <- cold[, "mu1"] > cold[, "mu2"]         # enforce mu1 < mu2
+lo <- ifelse(swap, cold[, "mu2"], cold[, "mu1"])
+hi <- ifelse(swap, cold[, "mu1"], cold[, "mu2"])
+round(c(short_component = mean(lo), long_component = mean(hi)), 2)
+```
+
+## Choosing between one component and two
+
+The model choice, one Gaussian or two, is a predictive question, and WAIC and
+PSIS-LOO answer it without a marginal likelihood. They need the per-observation
+log-likelihood normalised, so the single-Gaussian and the mixture both carry
+their `1 / sqrt(2 pi)` factor here. The lower value is the better predictor.
+
+```{r mix-compare}
+single <- gpum_model(
+  loglik = ~ -0.5 * ((x - mu) / exp(ls))^2 - ls - 0.9189385,
+  params = c("mu", "ls"), data = "x")
+fit_single <- gpu_metropolis(single, data = xdat, n_iter = 6000,
+                             n_chains = 8, method = "de", seed = 1,
+                             backend = "cpu")
+mix_norm <- gpum_model(
+  loglik = ~ log(
+      (1 / (1 + exp(-eta))) *
+        exp(-0.5 * ((x - mu1) / exp(ls1))^2) / exp(ls1) / 2.5066283
+    + (1 - 1 / (1 + exp(-eta))) *
+        exp(-0.5 * ((x - mu2) / exp(ls2))^2) / exp(ls2) / 2.5066283),
+  params = c("eta", "mu1", "ls1", "mu2", "ls2"), data = "x")
+fit_mix_norm <- gpu_metropolis(mix_norm, data = xdat, init = init,
+                               proposal_sd = c(0.2, 0.1, 0.1, 0.1, 0.1),
+                               n_iter = 6000, method = "pt", seed = 2,
+                               backend = "cpu")
+c(single = gpum_waic(fit_single, xdat)$waic,
+  mixture = gpum_waic(fit_mix_norm, xdat)$waic)
+if (requireNamespace("loo", quietly = TRUE)) {
+  c(single = gpum_loo(fit_single, xdat)$estimates["looic", "Estimate"],
+    mixture = gpum_loo(fit_mix_norm, xdat)$estimates["looic", "Estimate"])
+}
+```
+
+The two-component model has the much lower WAIC and LOO, the quantitative
+counterpart of the obvious two peaks in the histogram.
+
+## Observed against the generated distribution
+
+An applied fit is only trustworthy when the distribution it generates
+reproduces the data. `gpum_ppc()` simulates a posterior predictive sample from
+a fit given the family's simulator, and `gpum_density_compare()` overlays the
+observed density with the generated ones. We check both questions of the
+study. On the left, the eruption durations: the two-component mixture
+reproduces the two peaks, the single Gaussian cannot. On the right, the waiting
+times: the regression's predictive density tracks the observed one, two peaks
+included, because the predictor is itself bimodal.
+
+```{r ppc, fig.width = 8, fig.height = 4.2}
+pp_mix <- gpum_ppc(fit_mix, function(p)
+  if (stats::runif(1) < 1 / (1 + exp(-p["eta"]))) stats::rnorm(1, p["mu1"], exp(p["ls1"]))
+  else stats::rnorm(1, p["mu2"], exp(p["ls2"])))
+pp_single <- gpum_ppc(fit_single, function(p) stats::rnorm(1, p["mu"], exp(p["ls"])))
+pp_wait <- gpum_ppc(fit_de, function(p)
+  stats::rnorm(1, p["a"] + p["b"] * sample(d$eruptions, 1), exp(p["ls"])))
+
+op <- graphics::par(mfrow = c(1, 2), mar = c(4, 4, 2, 1))
+gpum_density_compare(d$eruptions, list(mixture = pp_mix, single = pp_single),
+                     main = "Eruption duration", xlab = "min")
+gpum_density_compare(d$waiting, list(regression = pp_wait),
+                     main = "Waiting time", xlab = "min")
+graphics::par(op)
+```
+
+# What each tool contributed
+
+The regular half of the study used the sampler `method = "de"` against the
+correlated regression geometry, `gpum_diagnose` and `ks_equivalence` for
+convergence and sampler agreement, `gpum_pairs` and `gpum_surface` for the
+joint posterior, `gpum_crlb` matched against `lm` for the information bound,
+`gpum_hypothesis`, `hdi` and `gpum_rope` for the decision on the slope, and
+`gpum_bayes_factor` for the weight of evidence. The irregular half used
+`method = "pt"` to sample the multimodal mixture, `gpum_crlb` again to show the
+reference declining where it does not apply, and `gpum_waic` with `gpum_loo`
+for the predictive model choice. One real data set exercised the package end
+to end.

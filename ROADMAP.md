@@ -31,7 +31,7 @@ many-chains GPU architecture.
   covariance. Population-based, so it maps onto the chain axis the package
   already parallelises. Two paths share `method = "de"`: a host-orchestrated
   variant with a per-batch frozen population snapshot (0.4.0, default), and a
-  per-generation in-kernel variant under `de_sync = TRUE` (0.4.1) for the
+  per-generation in-kernel variant under `de_sync = TRUE` (0.4.2) for the
   canonical per-iteration mixing on harder targets.
 
 ## Tier 2: optimisation layers
@@ -130,7 +130,10 @@ discrete deliverable, validated before the next opens.
   predictive check and Bayesian p-value are deferred to a later release, since
   they need replicated-data generation from an arbitrary likelihood, which the
   synthesis path of 0.8.0 introduces.
-- 0.4.1: the per-generation in-kernel Differential Evolution path under
+- 0.4.1: a plotting layer for the joint posterior (pairs, credible regions,
+  level-curve and 3D surface) and explanatory figures for the Bayesian
+  decisions (hypothesis probability, ROPE, Cramer-Rao, Bayes factor).
+- 0.4.2: the per-generation in-kernel Differential Evolution path under
   `de_sync = TRUE`, for the canonical per-iteration mixing on curved or
   strongly correlated targets.
 - 0.5.0: bivariate copula workflow with the four common families.

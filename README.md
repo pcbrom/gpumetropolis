@@ -218,8 +218,9 @@ The package is released through R-universe; see Installation above.
 The direction beyond the current release is recorded, tiered, in
 [`ROADMAP.md`](https://github.com/pcbrom/gpumetropolis/blob/main/ROADMAP.md).
 The in-scope Metropolis-Hastings family is now complete through Differential
-Evolution MCMC (v0.4.0); a per-generation in-kernel DE variant follows as
-v0.4.1 under `de_sync = TRUE`. The application trajectory then opens with the
+Evolution MCMC (v0.4.0); a plotting layer follows as v0.4.1 and a
+per-generation in-kernel DE variant as v0.4.2 under `de_sync = TRUE`. The
+application trajectory then opens with the
 bivariate copula workflow (v0.5.0), per-column marginal auto-selection
 (v0.6.0), vine copula for higher dimension (v0.7.0) and synthesis
 (v0.8.0). The distribution catalogue that drives the marginal auto-selection

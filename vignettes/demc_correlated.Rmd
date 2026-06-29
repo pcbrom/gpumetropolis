@@ -48,6 +48,10 @@ post_cov <- Sigma / n     # closed-form posterior covariance
 ```
 
 The per-observation Gaussian log-likelihood uses $\Sigma^{-1}$ as constants.
+When a coefficient of the formula is a number computed in R, the supported way
+to put it into the DSL is to build the formula text with `sprintf()` and turn
+it into a formula with `as.formula()`, as below; the entries of $\Sigma^{-1}$
+enter as literal constants the kernel reads.
 
 ```{r model}
 Si <- solve(Sigma)
@@ -124,15 +128,23 @@ round(cbind(gpum_crlb = cr$crlb_sd,
             analytic  = sqrt(diag(analytic_crlb))), 4)
 ```
 
-```{r fig, fig.alt = "Differential Evolution draws of the correlated posterior with the Cramer-Rao 95 percent ellipse overlaid."}
-d1 <- as.vector(fit_de$draws[, , "mu1"])
-d2 <- as.vector(fit_de$draws[, , "mu2"])
-plot(d1, d2, pch = ".", xlab = "mu1", ylab = "mu2",
-     main = "DE draws and the Cramer-Rao 95% ellipse")
-theta <- seq(0, 2 * pi, length.out = 200)
-ell <- t(ybar + t(chol(cr$crlb)) %*% rbind(cos(theta), sin(theta)) *
-         sqrt(stats::qchisq(0.95, df = 2)))
-graphics::lines(ell[, 1], ell[, 2], col = "red", lwd = 2)
+The package draws the comparison in one call. `gpum_pairs(fit, crlb = cr)`
+shows the marginal posteriors with their highest density intervals on the
+diagonal and, off the diagonal, the bivariate draws with their credible-region
+contour in black and the Cramer-Rao ellipse in red. Reading it: the black
+empirical region and the red theoretical ellipse coincide when the recovered
+spread matches the information bound, which is the case here.
+
+```{r fig, fig.alt = "Pairs plot of the correlated posterior with the Cramer-Rao ellipse overlaid by gpum_pairs.", fig.width = 6.5, fig.height = 6}
+gpum_pairs(fit_de, crlb = cr, level = 0.95)
+```
+
+The `plot()` method of the Cramer-Rao object gives the same verdict as a bar
+chart, the posterior standard deviation against the bound, parameter by
+parameter.
+
+```{r crlb-bars, fig.alt = "Posterior standard deviation against the Cramer-Rao bound, by parameter.", fig.width = 6, fig.height = 4}
+plot(cr)
 ```
 
 ## Consistency and the n to the minus one-half rate
@@ -172,8 +184,8 @@ at every size and shrinks with it as the sample grows, the signature of
 consistency; the single-replication error is itself noisy, so it is the trend
 and the scale, not a strict ordering, that carry the point. The posterior
 standard deviation tracks the $\sqrt{1/n}$ reference with a ratio near one at
-every size, the signature of asymptotic efficiency: it halves as $n$
-quadruples, from about 0.089 at $n = 125$ to 0.022 at $n = 2000$. Consistency is the more robust of the two: it can hold on
+every size, the signature of asymptotic efficiency: it roughly halves each
+time $n$ quadruples, as the printed `post_sd` column against `crlb_sd` shows. Consistency is the more robust of the two: it can hold on
 identifiable models where the normal approximation behind the efficiency rate
 does not, which is why `gpum_crlb()` reports the bound only where the stronger
 conditions also hold.

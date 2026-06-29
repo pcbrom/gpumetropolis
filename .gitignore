@@ -20,3 +20,6 @@ benchmark/models/m3
 benchmark/models/m4
 benchmark/models/*.hpp
 benchmark/models/*.o
+
+# rendered vignette previews (kept local; r-universe rebuilds from .Rmd)
+vignettes/*.html

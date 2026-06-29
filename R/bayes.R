@@ -90,7 +90,8 @@ gpum_hypothesis <- function(fit, parameter, lower = -Inf, upper = Inf) {
     prob = mean(d > lower & d < upper),
     prob_below = mean(d <= lower),
     prob_above = mean(d >= upper),
-    n = length(d)
+    n = length(d),
+    draws = d
   ), class = "gpum_hypothesis")
 }
 
@@ -142,7 +143,7 @@ gpum_rope <- function(fit, parameter, rope, null = 0, ci = 0.95) {
   }
   structure(list(
     parameter = parameter, hdi = h, rope = rope_int, ci = ci,
-    pct_in_rope = pct_in, decision = decision
+    pct_in_rope = pct_in, decision = decision, draws = d
   ), class = "gpum_rope")
 }
 

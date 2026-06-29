@@ -1,0 +1,219 @@
+---
+title: "Extreme sea levels on real data: return levels at Port Pirie"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Extreme sea levels on real data: return levels at Port Pirie}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>",
+                      fig.width = 7, fig.height = 4.2)
+Sys.setenv(RAYON_NUM_THREADS = "2")
+```
+
+This chapter answers the question a coastal engineer asks of extreme-value
+data: how high is the sea level that is exceeded on average once a century? The
+data are the 65 annual maximum sea levels at Port Pirie, South Australia,
+recorded in `evd::portpirie`, a textbook extreme-value series. The annual
+maximum of a long record is modelled by a Gumbel distribution, the
+extreme-value law for the maximum of many observations, and the inference runs
+the full toolkit on it, finishing at the return level, the engineering
+deliverable.
+
+```{r data, fig.height = 3.4}
+library(gpumetropolis)
+y <- as.numeric(evd::portpirie)
+hist(y, breaks = 16, col = "grey85", border = "white",
+     main = "Annual maximum sea level at Port Pirie", xlab = "metres")
+```
+
+## The Gumbel model
+
+The Gumbel log-density is `-(y - mu)/beta - exp(-(y - mu)/beta) - log(beta)`,
+a location `mu` and a scale `beta`. The scale is reparametrised as `lb =
+log(beta)` so the sampler proposes on the whole line; the `- lb` term is the
+normalising constant, kept so the density is proper for the comparison later.
+
+```{r model}
+gumbel <- gpum_model(
+  loglik = ~ -(y - mu) / exp(lb) - exp(-(y - mu) / exp(lb)) - lb,
+  params = c("mu", "lb"), data = "y")
+dat <- list(y = y)
+fit <- gpu_metropolis(gumbel, data = dat, n_iter = 8000, n_chains = 12,
+                      proposal_sd = c(0.04, 0.1),
+                      init = matrix(c(median(y), log(stats::sd(y))),
+                                    nrow = 12, ncol = 2, byrow = TRUE),
+                      method = "de", seed = 1, backend = "cpu")
+gpum_diagnose(fit, plot = FALSE)
+```
+
+## The joint posterior and the information bound
+
+Location and scale of a Gumbel fit are mildly correlated. `gpum_pairs()` shows
+the joint posterior with its credible region, and because the Gumbel model is
+regular, `gpum_crlb()` reports the Cramer-Rao bound. The bound on the location
+matches the standard error of the maximum-likelihood fit from `evd::fgev`
+directly; the scale here is on the log scale, so its bound is not on the same
+footing as the `evd` scale standard error and is left aside.
+
+```{r pairs, fig.width = 7, fig.height = 6}
+cr <- gpum_crlb(fit, data = dat)
+gpum_pairs(fit, crlb = cr, level = 0.95)
+```
+
+```{r crlb}
+ml <- evd::fgev(y, shape = 0)                 # maximum-likelihood Gumbel
+c(gpum_crlb_loc = unname(cr$crlb_sd[1]),
+  fgev_se_loc   = unname(sqrt(ml$var.cov[1, 1])))
+```
+
+## The return level, with its uncertainty
+
+The `m`-year return level is the sea level exceeded with probability `1/m` in a
+year: for a Gumbel, `z_m = mu - beta * log(-log(1 - 1/m))`. Every posterior
+draw of `(mu, beta)` gives one draw of `z_m`, so the posterior of the return
+level comes for free, and `hdi()` gives its credible interval. This is the
+quantity the engineer reports, with honest uncertainty rather than a point.
+
+```{r return-level}
+mu_d   <- as.vector(fit$draws[, , "mu"])
+beta_d <- exp(as.vector(fit$draws[, , "lb"]))
+z100   <- mu_d - beta_d * log(-log(1 - 1 / 100))   # 100-year return level
+c(mean = mean(z100), hdi(z100, 0.95))
+```
+
+```{r return-fig, fig.width = 7, fig.height = 4.2}
+hist(z100, breaks = 40, freq = FALSE, col = "grey85", border = "white",
+     main = "Posterior of the 100-year return level", xlab = "metres")
+abline(v = hdi(z100, 0.95), col = "blue", lty = 2)
+```
+
+## A design question as a hypothesis
+
+A sea wall is designed to a height. Whether the wall clears the centennial
+level is a posterior-probability question, answered directly from the return-
+level draws: the probability that the 100-year level exceeds a candidate
+design height.
+
+```{r design}
+design <- 4.3
+mean(z100 > design)                            # posterior P(100-year level > 4.3 m)
+```
+
+## Is the extreme-value law worth it? Gumbel against the Normal
+
+A tempting shortcut is to fit a Normal to the annual maxima. The extreme-value
+theory says the Gumbel is the right limit law for a maximum, and the data
+should prefer it. WAIC and PSIS-LOO settle the comparison from the pointwise
+log-likelihood, both densities normalised; the lower value predicts better.
+
+```{r compare}
+normal <- gpum_model(
+  loglik = ~ -0.5 * ((y - m) / exp(ls))^2 - ls - 0.9189385,
+  params = c("m", "ls"), data = "y")
+fit_n <- gpu_metropolis(normal, data = dat, n_iter = 8000, n_chains = 12,
+                        method = "de", seed = 1, backend = "cpu")
+c(gumbel = gpum_waic(fit, dat)$waic, normal = gpum_waic(fit_n, dat)$waic)
+if (requireNamespace("loo", quietly = TRUE)) {
+  c(gumbel = gpum_loo(fit, dat)$estimates["looic", "Estimate"],
+    normal = gpum_loo(fit_n, dat)$estimates["looic", "Estimate"])
+}
+```
+
+The Gumbel has the lower WAIC and LOO: the asymmetry of the extreme-value law,
+a heavier upper tail, fits annual maxima better than a symmetric Normal, which
+matters precisely in the upper tail the return level reads.
+
+## Observed against the generated distribution
+
+The criterion is a number; the eye wants the picture. The posterior-predictive
+overlay generates annual maxima from each fitted model and compares them with
+the observed histogram. The Gumbel reproduces the right-skewed shape; the
+Normal, symmetric by construction, misplaces mass on the left and underfits the
+upper tail, the failure the return level would inherit.
+
+The package provides this check directly. `gpum_ppc()` simulates a posterior
+predictive sample from a fit given the family's one-line simulator, and
+`gpum_density_compare()` overlays the observed density with the generated ones
+on one set of axes.
+
+```{r ppc, fig.width = 7, fig.height = 4.4}
+pp_gumbel <- gpum_ppc(fit,   function(p) p["mu"] - exp(p["lb"]) * log(-log(stats::runif(1))))
+pp_normal <- gpum_ppc(fit_n, function(p) stats::rnorm(1, p["m"], exp(p["ls"])))
+gpum_density_compare(y, list(Gumbel = pp_gumbel, Normal = pp_normal),
+                     main = "Port Pirie maxima: observed against generated",
+                     xlab = "metres")
+```
+
+## Head-to-head against the established packages
+
+On the same Gumbel fit, against the samplers that take an arbitrary
+log-density. MCMCpack is omitted, since its catalogue has no Gumbel, and a
+plain nimble model is too, since nimble needs a user-defined distribution for
+the Gumbel, a friction the log-density-based samplers do not have. The metric
+is again the effective sample per second of the location, computed with
+`coda`, and the recovered location is the agreement check.
+
+```{r h2h, message = FALSE, warning = FALSE}
+have <- function(p) requireNamespace(p, quietly = TRUE)
+ess_ps <- function(dr, secs) as.numeric(coda::effectiveSize(dr)) / max(secs, 0.02)
+N <- 30000L; rows <- list()
+if (have("coda")) {
+  t <- system.time(fg <- gpu_metropolis(gumbel, data = dat, n_iter = N, n_chains = 8,
+        proposal_sd = c(0.04, 0.1), method = "de", seed = 1, backend = "cpu"))["elapsed"]
+  rows[["gpumetropolis"]] <- c(ess_ps(as.vector(fg$draws[, , "mu"]), t), unname(t), mean(fg$draws[, , "mu"]))
+  gll <- function(mu, lb) { z <- (y - mu) / exp(lb); sum(-z - exp(-z) - lb) }
+  if (have("mcmc")) rows[["mcmc"]] <- tryCatch({
+    lp <- function(th) gll(th[1], th[2]) - 0.5 * ((th[1] - 4) / 2)^2 - 0.5 * (th[2] / 2)^2
+    t <- system.time(o <- mcmc::metrop(lp, c(median(y), log(stats::sd(y))), nbatch = N, scale = c(0.04, 0.1)))["elapsed"]
+    c(ess_ps(o$batch[, 1], t), unname(t), mean(o$batch[, 1])) }, error = function(e) rep(NA, 3))
+  if (have("BayesianTools")) rows[["BayesianTools"]] <- tryCatch({
+    ll <- function(par) gll(par[1], par[2])
+    su <- BayesianTools::createBayesianSetup(ll, lower = c(3, -3), upper = c(5, 1))
+    t <- system.time(o <- BayesianTools::runMCMC(su, settings = list(iterations = N, message = FALSE)))["elapsed"]
+    s <- as.matrix(BayesianTools::getSample(o, coda = TRUE))
+    c(ess_ps(s[, 1], t), unname(t), mean(s[, 1])) }, error = function(e) rep(NA, 3))
+  if (have("cmdstanr")) rows[["Stan"]] <- tryCatch({
+    sc <- "data{int n; vector[n] y;} parameters{real mu; real<lower=0> beta;} model{ y ~ gumbel(mu, beta); mu ~ normal(4,2); beta ~ normal(0,2);}"
+    mod <- cmdstanr::cmdstan_model(cmdstanr::write_stan_file(sc))
+    t <- system.time(sf <- mod$sample(data = list(n = length(y), y = y), chains = 1,
+        iter_sampling = N, iter_warmup = 1000, refresh = 0, show_messages = FALSE))["elapsed"]
+    dr <- as.numeric(sf$draws("mu", format = "draws_matrix")); c(ess_ps(dr, t), unname(t), mean(dr)) }, error = function(e) rep(NA, 3))
+}
+comp <- as.data.frame(do.call(rbind, rows)); names(comp) <- c("ESS_per_sec", "wall_sec", "location")
+comp <- comp[!is.na(comp$ESS_per_sec), ]; comp <- comp[order(-comp$ESS_per_sec), ]
+round(comp, 3)
+```
+
+All recover the same location near 3.87; they agree on the fit. The ranking on
+effective sample per second is led here by
+`r if (exists("comp")) rownames(comp)[1] else "a tuned sampler"`. As in the
+other cases, a generic single-chain run is not where `gpumetropolis` claims the
+lead; its advantage is portability and the many-chains regime, and on this
+non-standard density it is one formula away, while the canned-model packages
+cannot fit it at all.
+
+## The shape parameter, and a limit of the scalar model
+
+The full generalised extreme-value distribution adds a shape parameter `xi`
+that the Gumbel fixes at zero; testing whether `xi` differs from zero is the
+classical Port Pirie question, and the maximum-likelihood answer is a small
+negative shape with a confidence interval that contains zero, so the Gumbel is
+adequate. The generalised model is not fitted here because its log-density has
+a `1 / xi` term that is singular at `xi = 0`, the very value the data sit near;
+a faithful fit needs the Gumbel-limit branch of the density to be selected when
+`xi` is near zero, a conditional the package's scalar formula language does not
+yet express. This is one of the cases the vector-and-matrix DSL on the roadmap
+is meant to reach.
+
+# What this case exercised
+
+A real extreme-value series carried the regular toolkit, `method = "de"`,
+`gpum_diagnose`, `gpum_pairs` and `gpum_crlb` matched to `evd::fgev`, then used
+`hdi()` to put honest uncertainty on a derived engineering quantity, the
+return level, answered a design question as a posterior probability, and
+compared the extreme-value law against a Normal with `gpum_waic` and
+`gpum_loo`. It also marked, honestly, where the scalar model language stops:
+the singular shape parameter of the full generalised distribution.

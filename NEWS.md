@@ -1,3 +1,41 @@
+# gpumetropolis 0.4.1
+
+- A plotting layer for the joint posterior and the Bayesian decisions.
+  `gpum_pairs(fit, crlb = ...)` draws the marginal posteriors with their
+  highest density intervals on the diagonal and the bivariate posteriors with
+  their credible-region contours off the diagonal, overlaying the Cramer-Rao
+  ellipse when a `gpum_crlb` is supplied, so the convergence region of each
+  parameter pair reads against the information-bound reference.
+  `gpum_region(fit, params)` returns the highest posterior density region of a
+  pair as contour polygons that compose onto any plot with `lines()`, including
+  a scatter of the original data. `gpum_surface(fit, params)` shows the
+  bivariate posterior density as level curves in two dimensions and as a
+  three-dimensional surface with the credible-region contours projected on the
+  floor.
+- Explanatory figures for the hypothesis tools: `plot()` methods for the
+  objects of `gpum_hypothesis()` (the posterior with the hypothesis interval
+  shaded and its probability), `gpum_rope()` (the posterior with the ROPE band,
+  the highest density interval bar and the decision, in the style of Kruschke),
+  `gpum_crlb()` (posterior spread against the Cramer-Rao bound) and
+  `gpum_bayes_factor()` (the two log evidences with the factor on the Jeffreys
+  scale).
+- `gpum_ppc()` and `gpum_density_compare()` add the observed-against-generated
+  check that applied work needs. `gpum_ppc(fit, generate)` draws a posterior
+  predictive sample, with the user supplying the family's one-line simulator
+  since the package does not yet generate from an arbitrary likelihood;
+  `gpum_density_compare(observed, generated)` overlays the observed density and
+  one or more generated densities on a single plot, so a fit can be checked
+  against the data and competing models read off against each other.
+- Three case-study vignettes on real data exercise the whole package end to
+  end. `case_old_faithful` fits a correlated regression and a bimodal mixture
+  to the Old Faithful geyser, covering Differential Evolution, parallel
+  tempering, the Cramer-Rao reference both where it applies and where it
+  declines, the decision verbs and the model-comparison verbs.
+  `case_mtcars` is a model-comparison study on fuel economy, weighing a second
+  predictor by WAIC, LOO and the Bayes factor. `case_portpirie` fits the Gumbel
+  law to annual maximum sea levels, derives the hundred-year return level with
+  its credible interval, and compares the extreme-value law against a Normal.
+
 # gpumetropolis 0.4.0
 
 - `gpu_metropolis(method = "de")` adds Differential Evolution MCMC. The

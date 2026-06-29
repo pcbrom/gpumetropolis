@@ -118,6 +118,12 @@ reference.
 gpum_diagnose(fit)
 ```
 
+Reading the panels for a pass or fail: in the trace the chains overlap as one
+band with no drift; the pooled density is a single agreed peak; the running
+mean of each chain settles to the same value; the ACF decays toward zero
+within a few lags. The verdict line states the call from the R-hat and ESS
+thresholds, so the panels are the visual confirmation of the table.
+
 The individual building blocks are also exported. They accept the post-warmup
 `n_iter` by `n_chains` matrix of one parameter's draws; when the input is
 already post-warmup, pass `warmup = 0` to keep all rows for the diagnostic.
@@ -129,6 +135,17 @@ ess(mu_draws, warmup = 0)    # effective sample size, summed over chains
 
 R-hat near 1 indicates the chains have mixed; the effective sample size
 reports how many independent draws the autocorrelated output is worth.
+
+Once the chains have converged, `hdi()` summarises a parameter as the shortest
+interval that holds a given posterior mass, the credible interval the package
+reports. The worked-case chapters build on this with the decision verbs
+`gpum_hypothesis()` and `gpum_rope()`, the model-comparison verbs
+`gpum_waic()` and `gpum_loo()`, and the joint-posterior plotters `gpum_pairs()`
+and `gpum_surface()`.
+
+```{r hdi}
+hdi(mu_draws, ci = 0.95)     # 95% highest posterior density interval for mu
+```
 
 ## One source, several backends
 

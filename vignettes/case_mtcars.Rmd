@@ -1,0 +1,266 @@
+---
+title: "Model comparison on real data: fuel economy in mtcars"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Model comparison on real data: fuel economy in mtcars}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>",
+                      fig.width = 7, fig.height = 4.2)
+Sys.setenv(RAYON_NUM_THREADS = "2")
+```
+
+This chapter studies a real regression and the question that follows every
+regression: is the extra predictor worth keeping? The data are the 32 cars of
+`datasets::mtcars`; the response is fuel economy `mpg`, and the candidate
+predictors are weight `wt` and gross horsepower `hp`. The study fits the simple
+model, reads it with the full inference toolkit, then compares it against the
+richer model by both predictive accuracy and weight of evidence.
+
+```{r data, fig.height = 3.6}
+library(gpumetropolis)
+plot(mtcars$wt, mtcars$mpg, pch = 19, col = "grey45",
+     xlab = "weight (1000 lb)", ylab = "fuel economy (mpg)",
+     main = "Fuel economy against weight")
+```
+
+## The simple model and its fit
+
+The model is `mpg = a + b * wt + Normal(0, sigma)`, with the log standard
+deviation `ls` unbounded. The slope and intercept are strongly correlated in
+the posterior, which is the geometry the Differential Evolution sampler handles
+without tuning.
+
+```{r fit-wt}
+m_wt <- gpum_model(
+  loglik = ~ -0.5 * ((mpg - a - b * wt) / exp(ls))^2 - ls,
+  params = c("a", "b", "ls"), data = c("mpg", "wt"))
+dat <- list(mpg = mtcars$mpg, wt = mtcars$wt, hp = mtcars$hp)
+fit_wt <- gpu_metropolis(m_wt, data = dat, n_iter = 8000, n_chains = 16,
+                         method = "de", seed = 1, backend = "cpu")
+gpum_diagnose(fit_wt, plot = FALSE)
+```
+
+## Reading the posterior
+
+The joint posterior of intercept and slope is correlated; `gpum_pairs()` shows
+it with the credible-region contour, and `gpum_crlb()` checks the spread
+against the Cramer-Rao bound, which for this regular Gaussian model closely
+matches the standard errors of `lm()`.
+
+```{r pairs-wt, fig.width = 7, fig.height = 6}
+cr <- gpum_crlb(fit_wt, data = dat)
+gpum_pairs(fit_wt, crlb = cr, level = 0.95)
+```
+
+```{r crlb-wt}
+lm_wt <- lm(mpg ~ wt, data = mtcars)
+rbind(gpum_crlb = cr$crlb_sd[1:2],
+      lm_se     = coef(summary(lm_wt))[, "Std. Error"])
+```
+
+The slope answers the scientific question. `gpum_hypothesis()` gives the
+posterior probability that heavier cars are less economical (`b < 0`), `hdi()`
+its interval, and `gpum_rope()` whether the effect is practically nonzero
+against a region of slopes too small to matter, here a tenth of an mpg per
+1000 lb.
+
+```{r decide-wt}
+gpum_hypothesis(fit_wt, "b", upper = 0)        # P(b < 0): heavier means thirstier
+hdi(as.vector(fit_wt$draws[, , "b"]), 0.95)
+rope_b <- gpum_rope(fit_wt, "b", rope = 0.1, null = 0)
+rope_b
+```
+
+```{r rope-wt-fig, fig.width = 7, fig.height = 4.2}
+plot(rope_b)
+```
+
+## Does horsepower add anything? Predictive comparison
+
+The richer model adds horsepower: `mpg = a + b1 * wt + b2 * hp + Normal(0,
+sigma)`. WAIC and PSIS-LOO compare the two by out-of-sample predictive
+accuracy, with no marginal likelihood. The log-likelihoods carry the same
+normalising constant, so the comparison is valid; the lower value predicts
+better.
+
+```{r fit-wthp}
+m_wthp <- gpum_model(
+  loglik = ~ -0.5 * ((mpg - a - b1 * wt - b2 * hp) / exp(ls))^2 - ls - 0.9189385,
+  params = c("a", "b1", "b2", "ls"), data = c("mpg", "wt", "hp"))
+m_wt_n <- gpum_model(
+  loglik = ~ -0.5 * ((mpg - a - b * wt) / exp(ls))^2 - ls - 0.9189385,
+  params = c("a", "b", "ls"), data = c("mpg", "wt"))
+fit_wt_n  <- gpu_metropolis(m_wt_n, data = dat, n_iter = 8000, n_chains = 16,
+                            method = "de", seed = 1, backend = "cpu")
+fit_wthp  <- gpu_metropolis(m_wthp, data = dat, n_iter = 8000, n_chains = 16,
+                            method = "de", seed = 1, backend = "cpu")
+c(wt = gpum_waic(fit_wt_n, dat)$waic, wt_hp = gpum_waic(fit_wthp, dat)$waic)
+if (requireNamespace("loo", quietly = TRUE)) {
+  c(wt    = gpum_loo(fit_wt_n, dat)$estimates["looic", "Estimate"],
+    wt_hp = gpum_loo(fit_wthp, dat)$estimates["looic", "Estimate"])
+}
+```
+
+## Weighing the evidence for horsepower
+
+The Bayes factor weighs the evidence directly, comparing the two-predictor
+model against the one-predictor model. Both carry weak proper priors, and the
+marginal likelihood of each is estimated by thermodynamic integration.
+
+```{r bf}
+m_wthp_p <- gpum_model(
+  loglik = ~ -0.5 * ((mpg - a - b1 * wt - b2 * hp) / exp(ls))^2 - ls,
+  params = c("a", "b1", "b2", "ls"), data = c("mpg", "wt", "hp"),
+  prior  = ~ -0.5 * (a / 40)^2 - 0.5 * (b1 / 20)^2 - 0.5 * (b2 / 1)^2
+            - 0.5 * ((ls - 1) / 1)^2)
+m_wt_p <- gpum_model(
+  loglik = ~ -0.5 * ((mpg - a - b * wt) / exp(ls))^2 - ls,
+  params = c("a", "b", "ls"), data = c("mpg", "wt"),
+  prior  = ~ -0.5 * (a / 40)^2 - 0.5 * (b / 20)^2 - 0.5 * ((ls - 1) / 1)^2)
+bf <- gpum_bayes_factor(m_wthp_p, m_wt_p, data = dat,
+                        n_rungs = 12L, n_iter = 2500L, n_chains = 8L, seed = 1L)
+bf
+```
+
+```{r bf-fig, fig.width = 6, fig.height = 4}
+plot(bf)
+```
+
+The two criteria can disagree in emphasis: WAIC and LOO reward predictive
+accuracy, while the Bayes factor, sensitive to the prior, penalises the added
+parameter unless the data demand it. Reading them together is the honest
+summary: horsepower carries some predictive signal beyond weight, and how
+decisively depends on whether the goal is prediction or a weight of evidence
+under a stated prior.
+
+## Observed against the generated distribution
+
+The fitted models should generate fuel economies that look like the observed
+ones. The posterior-predictive densities of both models, overlaid on the
+observed density, confirm that both reproduce the data well, the two predictive
+curves nearly coinciding. That near-coincidence is the point: when two models
+generate almost the same distribution, the eye cannot rank them, and the
+predictive criteria of the previous section, WAIC and LOO, are what separate
+them.
+
+`gpum_ppc()` simulates from each fitted model, drawing a random car for each
+predictive draw so the covariates match the data, and `gpum_density_compare()`
+overlays the observed and generated densities.
+
+```{r ppc, fig.width = 7, fig.height = 4.4}
+pp_wt <- gpum_ppc(fit_wt_n, function(p) {
+  r <- sample(nrow(mtcars), 1)
+  stats::rnorm(1, p["a"] + p["b"] * mtcars$wt[r], exp(p["ls"]))
+})
+pp_wthp <- gpum_ppc(fit_wthp, function(p) {
+  r <- sample(nrow(mtcars), 1)
+  stats::rnorm(1, p["a"] + p["b1"] * mtcars$wt[r] + p["b2"] * mtcars$hp[r], exp(p["ls"]))
+})
+gpum_density_compare(mtcars$mpg, list(wt = pp_wt, `wt + hp` = pp_wthp),
+                     main = "Fuel economy: observed against generated",
+                     xlab = "mpg")
+```
+
+## Head-to-head against the established packages
+
+The honest question an applied user asks is how this package stands against the
+ones already in use. We fit the same simple model, `mpg ~ wt`, with each of the
+established Bayesian samplers and with `gpumetropolis`, and read off two things:
+whether they agree on the answer, and how much effective sample each delivers
+per second. The effective sample size is computed uniformly with `coda` so the
+estimator is not a confounder; the slope recovered by each is the agreement
+check.
+
+```{r headtohead, message = FALSE, warning = FALSE}
+have <- function(p) requireNamespace(p, quietly = TRUE)
+# Effective sample per second; max(secs, ...) keeps the ratio stable when a
+# very fast sampler runs near the timer resolution.
+ess_ps <- function(draws, secs) as.numeric(coda::effectiveSize(draws)) / max(secs, 0.02)
+N <- 30000L; yv <- mtcars$mpg; xw <- mtcars$wt; nobs <- length(yv)
+rows <- list()
+if (have("coda")) {
+  t <- system.time(fg <- gpu_metropolis(m_wt, data = list(mpg = yv, wt = xw),
+        n_iter = N, n_chains = 8, method = "de", seed = 1, backend = "cpu"))["elapsed"]
+  rows[["gpumetropolis"]] <- c(ess_per_sec = ess_ps(as.vector(fg$draws[, , "b"]), t),
+                               wall_sec = unname(t), slope = mean(fg$draws[, , "b"]))
+  if (have("MCMCpack")) rows[["MCMCpack"]] <- tryCatch({
+    t <- system.time(f <- MCMCpack::MCMCregress(mpg ~ wt, data = mtcars, mcmc = N, verbose = 0))["elapsed"]
+    c(ess_ps(f[, "wt"], t), unname(t), mean(f[, "wt"])) }, error = function(e) rep(NA, 3))
+  if (have("mcmc")) rows[["mcmc"]] <- tryCatch({
+    lp <- function(th) sum(dnorm(yv, th[1] + th[2] * xw, exp(th[3]), log = TRUE)) -
+            0.5 * (th[1] / 50)^2 - 0.5 * (th[2] / 50)^2
+    t <- system.time(o <- mcmc::metrop(lp, c(20, -5, 1), nbatch = N, scale = c(2, 0.6, 0.1)))["elapsed"]
+    c(ess_ps(o$batch[, 2], t), unname(t), mean(o$batch[, 2])) }, error = function(e) rep(NA, 3))
+  if (have("nimble")) rows[["nimble"]] <- tryCatch({
+    suppressMessages(library(nimble))
+    code <- nimbleCode({ for (i in 1:n) { mu[i] <- a + b * x[i]; y[i] ~ dnorm(mu[i], sd = s) }
+      a ~ dnorm(0, sd = 50); b ~ dnorm(0, sd = 50); s ~ dunif(0, 50) })
+    t <- system.time({
+      md <- nimbleModel(code, constants = list(n = nobs),
+              data = list(y = yv, x = xw), inits = list(a = 20, b = -5, s = 3))
+      cm <- compileNimble(md)
+      mc <- buildMCMC(configureMCMC(md, monitors = c("a", "b", "s")))
+      cmc <- compileNimble(mc, project = md)
+      sm <- runMCMC(cmc, niter = N, nburnin = 0, progressBar = FALSE)
+    })["elapsed"]
+    c(ess_ps(sm[, "b"], t), unname(t), mean(sm[, "b"])) }, error = function(e) rep(NA, 3))
+  if (have("BayesianTools")) rows[["BayesianTools"]] <- tryCatch({
+    ll <- function(par) sum(dnorm(yv, par[1] + par[2] * xw, exp(par[3]), log = TRUE))
+    su <- BayesianTools::createBayesianSetup(ll, lower = c(0, -15, -2), upper = c(40, 5, 3))
+    t <- system.time(o <- BayesianTools::runMCMC(su, settings = list(iterations = N, message = FALSE)))["elapsed"]
+    s <- as.matrix(BayesianTools::getSample(o, coda = TRUE))
+    c(ess_ps(s[, 2], t), unname(t), mean(s[, 2])) }, error = function(e) rep(NA, 3))
+  if (have("cmdstanr")) rows[["Stan"]] <- tryCatch({
+    sc <- "data{int n; vector[n] y; vector[n] x;} parameters{real a; real b; real<lower=0> sigma;} model{ y ~ normal(a + b*x, sigma); a ~ normal(0,50); b ~ normal(0,50);}"
+    mod <- cmdstanr::cmdstan_model(cmdstanr::write_stan_file(sc))
+    t <- system.time(sf <- mod$sample(data = list(n = nobs, y = yv, x = xw), chains = 1,
+        iter_sampling = N, iter_warmup = 1000, refresh = 0, show_messages = FALSE))["elapsed"]
+    dr <- as.numeric(sf$draws("b", format = "draws_matrix"))
+    c(ess_ps(dr, t), unname(t), mean(dr)) }, error = function(e) rep(NA, 3))
+}
+comp <- as.data.frame(do.call(rbind, rows))
+names(comp) <- c("ESS_per_sec", "wall_sec", "slope")
+comp <- comp[!is.na(comp$ESS_per_sec), ]
+comp <- comp[order(-comp$ESS_per_sec), ]
+round(comp, 2)
+```
+
+Two readings. First, every sampler recovers the same slope near the
+least-squares value, so they agree on the inference; the comparison is about
+cost, not correctness. Second, in this regime, a small data set fit with one
+chain, the leader on effective sample per second is `r if (exists("comp")) rownames(comp)[1] else "a specialised sampler"`,
+a specialised or gradient sampler, with `gpumetropolis` competitive but not
+ahead. That is the honest boundary the package draws: it does not claim to beat
+a tuned single-chain sampler on a small regular model. Its advantage is the
+many-chains and large-data regime, where the registered benchmark of
+`EXPERIMENT_PROTOCOL.md` records it reaching tens to hundreds of times the
+effective sample per second of the same competitors, and the only one to scale
+to thousands of chains. Time to first sample is a second axis the per-second
+number hides: `nimble` compiles a tailored sampler for each model, a cost that
+dominates its wall-clock on a small fit and can keep it out of the live table
+of a non-interactive build, while its registered benchmark numbers, where that
+cost is amortised over long runs, are in `EXPERIMENT_PROTOCOL.md`.
+
+What each package delivers, beyond this one number:
+
+| Package | What it delivers |
+|---|---|
+| `gpumetropolis` | one formula running on CPU, CUDA and Vulkan; scales to thousands of chains; strongest in the many-chains, expensive-density regime |
+| MCMCpack | fast canned Gibbs samplers for standard models like regression; little to tune; limited to its catalogue |
+| mcmc | a general random-walk `metrop()` over any log-density; light and simple |
+| nimble | a full BUGS-style modelling language with many algorithms; compiles each model, so high time-to-first-sample |
+| BayesianTools | flexible likelihood-based samplers with strong diagnostics; aimed at expensive models |
+| Stan | gradient samplers (HMC/NUTS) that dominate differentiable models in high dimension, after a model compile |
+
+# What this case exercised
+
+A real regression carried the regular toolkit, `method = "de"`,
+`gpum_diagnose`, `gpum_pairs`, `gpum_crlb` matched to `lm`, and the decision
+verbs `gpum_hypothesis`, `hdi` and `gpum_rope` on the slope, and then put the
+model-comparison verbs to work, `gpum_waic` and `gpum_loo` for predictive
+accuracy and `gpum_bayes_factor` for the weight of evidence, on the concrete
+question of whether to keep a second predictor.
