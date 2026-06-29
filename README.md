@@ -17,7 +17,7 @@ generic MCMC sampler with a vendor-agnostic GPU-portable kernel.
 The model expression is compiled to a stack-machine bytecode that a single
 CubeCL kernel interprets, so any model in the supported operation set runs on
 the CPU and GPU with no runtime code generation. CubeCL compiles that one
-kernel for CUDA, ROCm, Vulkan and CPU back ends.
+kernel for the CUDA, Vulkan and CPU backends the package exposes.
 
 The package is under active development. See `## Project status` below.
 
@@ -136,6 +136,32 @@ ks_equivalence(fit$draws[, , "mu"], fit_gpu$draws[, , "mu"])
 before the Kolmogorov-Smirnov test, because that test assumes independent
 draws while MCMC output is autocorrelated.
 
+Since v0.4.0, `gpum_crlb(fit, data)` adds an optional Cramer-Rao reference: it
+forms the observed Fisher information by a finite-difference Hessian of the
+compiled log-likelihood and inverts it to the lower bound on the covariance of
+an unbiased estimator, reporting it beside the empirical posterior spread. The
+bound is a frequentist asymptotic, prior-free reference; under the regularity
+of the Bernstein-von Mises theorem the posterior covariance approaches it, so
+an agreement is a check that the sampler recovered the information-bound
+geometry. The function withholds the comparison, with a stated reason, when a
+model has no data term, when the largest R-hat signals a multimodal or
+unconverged posterior, or when the observed information is not positive
+definite.
+
+Also since v0.4.0, a formal Bayesian decision and comparison layer reads off
+the fit. From the draws alone, `gpum_hypothesis(fit, parameter, lower, upper)`
+gives the posterior probability of an interval or one-sided hypothesis, and
+`gpum_rope(fit, parameter, rope)` applies the region-of-practical-equivalence
+rule against the highest density interval. For predictive model comparison
+without a marginal likelihood, `gpum_waic(fit, data)` and `gpum_loo(fit, data)`
+report WAIC and Pareto-smoothed importance-sampling leave-one-out, the latter
+through the `loo` package. For the weight of evidence,
+`gpum_evidence(model, data)` estimates the log marginal likelihood by
+thermodynamic integration from the prior to the posterior, and
+`gpum_bayes_factor(model1, model0, data)` forms the Bayes factor; both require
+a proper prior and report the prior-sensitivity caveat. The posterior
+predictive check is deferred to the release that adds data generation.
+
 ## When the GPU helps, and when it does not
 
 A GPU does not accelerate every MCMC. The sequential dependence inside a chain
@@ -171,6 +197,19 @@ The development follows a phased plan.
   [`EXPERIMENT_PROTOCOL.md`](https://github.com/pcbrom/gpumetropolis/blob/main/EXPERIMENT_PROTOCOL.md)
   and as the vignette
   [`m2_parallel_tempering`](https://github.com/pcbrom/gpumetropolis/blob/main/vignettes/m2_parallel_tempering.Rmd).
+- Phase 6 (v0.4.0): Differential Evolution MCMC, `method = "de"`. The
+  proposal for each chain is the scaled difference of two other chains, so it
+  aligns with the correlation of the target through the ensemble geometry,
+  with no explicit covariance and no hand tuning of the proposal scale (ter
+  Braak 2006). Two worked cases enter the living book: the twisted Gaussian
+  of Haario, Saksman and Tamminen (2001) in
+  [`demc_banana`](https://github.com/pcbrom/gpumetropolis/blob/main/vignettes/demc_banana.Rmd),
+  and a strongly correlated bivariate posterior with a closed-form
+  Cramer-Rao reference in
+  [`demc_correlated`](https://github.com/pcbrom/gpumetropolis/blob/main/vignettes/demc_correlated.Rmd).
+  The amendment v1.0 of
+  [`EXPERIMENT_PROTOCOL.md`](https://github.com/pcbrom/gpumetropolis/blob/main/EXPERIMENT_PROTOCOL.md)
+  records the protocol for these cases.
 
 The package is released through R-universe; see Installation above.
 
@@ -178,8 +217,9 @@ The package is released through R-universe; see Installation above.
 
 The direction beyond the current release is recorded, tiered, in
 [`ROADMAP.md`](https://github.com/pcbrom/gpumetropolis/blob/main/ROADMAP.md).
-The in-scope Metropolis-Hastings-family next step is Differential Evolution
-MCMC (v0.4.0, target 2026-06-29), followed by the application trajectory of
+The in-scope Metropolis-Hastings family is now complete through Differential
+Evolution MCMC (v0.4.0); a per-generation in-kernel DE variant follows as
+v0.4.1 under `de_sync = TRUE`. The application trajectory then opens with the
 bivariate copula workflow (v0.5.0), per-column marginal auto-selection
 (v0.6.0), vine copula for higher dimension (v0.7.0) and synthesis
 (v0.8.0). The distribution catalogue that drives the marginal auto-selection
@@ -377,10 +417,10 @@ magnitude are routine. For **fast approximate inference** the
 variational paths through `Stan` (ADVI), `PyMC` (BBVI) or `INLA` (Rue
 et al. 2009) cost a small fraction of the MCMC wall-clock. For
 **mixture models with unknown number of components** reversible-jump
-MCMC (Richardson e Green 1997) or Dirichlet-process mixtures estimate
+MCMC (Richardson and Green 1997) or Dirichlet-process mixtures estimate
 the parameters and `k` jointly, which fixed-`k` tempering does not. For
 **likelihoods that are intractable** ABC and pseudo-marginal methods
-(Andrieu e Roberts 2009) are the right tool. The package does not
+(Andrieu and Roberts 2009) are the right tool. The package does not
 compete on those axes and does not claim to.
 
 **Where `gpumetropolis` adds value**: the package is the right pick

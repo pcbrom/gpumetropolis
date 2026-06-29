@@ -1,0 +1,137 @@
+---
+title: "Differential Evolution on a curved target (the banana)"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Differential Evolution on a curved target (the banana)}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>",
+                      fig.width = 7, fig.height = 4.2)
+Sys.setenv(RAYON_NUM_THREADS = "2")
+```
+
+This vignette is the third chapter of the worked-case companion to the
+package: one model at a time, the question the user faces, the failure of the
+default sampler, and the call that fixes it. The model here is the twisted
+Gaussian of Haario, Saksman and Tamminen (2001), the standard stress test for
+samplers on a curved target, and the call that fixes it is
+`gpu_metropolis(method = "de")`, the v0.4.0 release.
+
+## The model
+
+The banana is a Gaussian bent along a parabola. In two dimensions its
+log-density, up to a constant, is
+
+$$
+\log p(x_1, x_2) = -\frac{x_1^2}{200}
+  - \frac12\bigl(x_2 + b\,x_1^2 - 100\,b\bigr)^2 ,
+$$
+
+with $b = 0.1$. The first coordinate is wide, with standard deviation near
+10; the second is pinned to the parabola $x_2 \approx 100b - b\,x_1^2$, so the
+local correlation between $x_1$ and $x_2$ changes sign and strength as $x_1$
+moves along the ridge. No single diagonal proposal can match a geometry whose
+correlation is different at every point of the ridge. The target has no data;
+it is declared through the prior.
+
+```{r model}
+library(gpumetropolis)
+banana <- gpum_model(
+  loglik = ~ 0,
+  params = c("x1", "x2"),
+  prior  = ~ -x1^2 / 200 - 0.5 * (x2 + 0.1 * x1^2 - 10)^2
+)
+# Overdispersed starting ensemble across the ridge.
+set.seed(11)
+init <- cbind(stats::rnorm(40, 0, 8), stats::rnorm(40, 0, 4))
+```
+
+## The failure mode of diagonal random-walk Metropolis
+
+The default `method = "rwm"` adapts a per-chain, per-dimension proposal scale
+during warmup. That is the best a diagonal proposal can do, and it is not
+enough here: a scale tuned for the wide $x_1$ axis overshoots the narrow
+conditional spread of $x_2$, and a scale tuned for $x_2$ crawls along $x_1$.
+The chain cannot follow the bend.
+
+```{r rwm}
+fit_rwm <- gpu_metropolis(banana, init = init, n_iter = 8000,
+                          method = "rwm", seed = 1, backend = "cpu")
+rhat_rwm <- c(rhat(fit_rwm$draws[, , "x1"], 0),
+              rhat(fit_rwm$draws[, , "x2"], 0))
+ess_rwm  <- c(ess(fit_rwm$draws[, , "x1"], 0),
+              ess(fit_rwm$draws[, , "x2"], 0))
+```
+
+## The fix: Differential Evolution
+
+`method = "de"` builds each proposal from the difference of two other chains
+in the ensemble. Where the ensemble straddles the ridge, those difference
+vectors point along the ridge, so the proposal is automatically oriented to
+the local geometry, with no covariance to estimate and no scale to tune.
+
+```{r de}
+fit_de <- gpu_metropolis(banana, init = init, n_iter = 8000,
+                         method = "de", seed = 1, backend = "cpu")
+rhat_de <- c(rhat(fit_de$draws[, , "x1"], 0),
+             rhat(fit_de$draws[, , "x2"], 0))
+ess_de  <- c(ess(fit_de$draws[, , "x1"], 0),
+             ess(fit_de$draws[, , "x2"], 0))
+```
+
+The two samplers run the same chains for the same number of iterations from
+the same start. The contrast is in the mixing.
+
+```{r compare}
+data.frame(
+  method = c("rwm", "de"),
+  rhat_x1 = c(rhat_rwm[1], rhat_de[1]),
+  rhat_x2 = c(rhat_rwm[2], rhat_de[2]),
+  ess_x1  = c(ess_rwm[1], ess_de[1]),
+  ess_x2  = c(ess_rwm[2], ess_de[2])
+)
+```
+
+## Reading the result
+
+```{r fig, fig.alt = "Pooled draws of the banana target for random-walk Metropolis and Differential Evolution."}
+op <- graphics::par(mfrow = c(1, 2), mar = c(4, 4, 2, 1))
+xr <- range(c(fit_rwm$draws[, , "x1"], fit_de$draws[, , "x1"]))
+yr <- range(c(fit_rwm$draws[, , "x2"], fit_de$draws[, , "x2"]))
+plot(as.vector(fit_rwm$draws[, , "x1"]), as.vector(fit_rwm$draws[, , "x2"]),
+     pch = ".", xlim = xr, ylim = yr, xlab = "x1", ylab = "x2",
+     main = sprintf("rwm (R-hat x1 %.2f)", rhat_rwm[1]))
+plot(as.vector(fit_de$draws[, , "x1"]), as.vector(fit_de$draws[, , "x2"]),
+     pch = ".", xlim = xr, ylim = yr, xlab = "x1", ylab = "x2",
+     main = sprintf("de (R-hat x1 %.2f)", rhat_de[1]))
+graphics::par(op)
+```
+
+The Differential Evolution panel fills the curved ridge more evenly and
+reaches a markedly lower R-hat at the same iteration budget, with a higher
+effective sample size; the random-walk panel covers the ridge unevenly, with
+the higher R-hat that is the signature of chains still mixing across the bend.
+The banana is a hard target and neither run is fully converged at 8000
+iterations, so both gain from a longer run; the point of the comparison is
+the gap between them at equal cost. The one-call diagnostic shows the
+per-chain acceptance and the ensemble spread per dimension over the batches,
+the quantity that keeps the difference proposal alive.
+
+```{r diagnose, eval = FALSE}
+gpum_diagnose(fit_de)
+```
+
+## Honest positioning
+
+The banana is a textbook success of population samplers, not a novelty: any
+correct Differential Evolution implementation recovers the ridge, and a
+gradient sampler such as the no-U-turn sampler would do as well or better on a
+target this smooth. The value `gpumetropolis` adds is that the same formula a
+user already writes becomes a kernel that runs on the CPU and the GPU from one
+source, and that `method = "de"` is a built-in path rather than a hand-coded
+proposal. The next chapter turns to a correlated posterior with a closed-form
+Cramer-Rao reference, where the correctness of the recovered geometry can be
+checked against theory.

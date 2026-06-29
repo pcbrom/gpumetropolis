@@ -1,3 +1,67 @@
+# gpumetropolis 0.4.0
+
+- `gpu_metropolis(method = "de")` adds Differential Evolution MCMC. The
+  proposal for each chain is the scaled difference of two other chains,
+  `x_c + gamma * (x_a - x_b) + epsilon`, so the proposal aligns with the
+  correlation of the target through the ensemble geometry, with no
+  explicit covariance and no hand tuning of `proposal_sd` (ter Braak
+  2006). The default scale is `gamma = 2.38 / sqrt(2 * n_params)`, the
+  value optimal for an approximately Gaussian target; with probability
+  0.1 each iteration the scale collapses to 1 for an occasional
+  mode-crossing jump. A small per-dimension jitter `de_noise` (default
+  `1e-3` of the running per-chain scale) keeps the chain irreducible
+  when the ensemble collapses onto a subspace. The path needs at least
+  four chains and maps onto the chain axis the package already
+  parallelises.
+- The implementation is host-orchestrated (path A): the difference pool
+  is the population frozen at the start of each batch, refreshed every
+  `de_every` iterations (default `max(n_chains, 10)`), and the kernel
+  draws the difference pairs internally from that snapshot. Because the
+  snapshot is fixed within a batch the chains stay independent during
+  the batch, so the block-per-chain kernel is unchanged in structure;
+  the proposal increment is symmetric, so the acceptance ratio is the
+  density ratio alone. A per-generation in-kernel variant is planned for
+  0.4.1 under `de_sync = TRUE`.
+- `gpum_diagnose(fit)` recognises a DE fit: the per-parameter summary
+  covers every chain (there is no cold chain to collapse to), an extra
+  row of panels shows the per-chain acceptance and the ensemble spread
+  per dimension over the batches, and a hint fires when the population
+  spread collapses in any dimension ("Raise de_noise or n_chains").
+- `gpum_crlb(fit, data)` adds an optional Cramer-Rao reference. It forms
+  the observed Fisher information by a central-difference Hessian of the
+  same compiled log-likelihood the sampler used, inverts it to the
+  lower bound on the covariance of an unbiased estimator, and reports it
+  beside the empirical posterior spread. Under the regularity of the
+  Bernstein-von Mises theorem the posterior covariance approaches the
+  inverse Fisher information, so a match is a check that the sampler
+  recovered the information-bound geometry. The bound is a frequentist,
+  asymptotic, prior-free object, and the function refuses to report a
+  number rather than mislead when its assumptions visibly fail: a model
+  with no data term, a largest R-hat above a threshold (multimodal or
+  unconverged), or an observed information that is not positive definite
+  (a non-regular geometry or a boundary). `gpum_diagnose(fit, crlb = ...)`
+  overlays the asymptotic-normal reference on the density panels.
+- A formal Bayesian decision and comparison layer is added. From the draws
+  alone: `gpum_hypothesis(fit, parameter, lower, upper)` gives the posterior
+  probability of an interval or one-sided hypothesis, and
+  `gpum_rope(fit, parameter, rope)` applies the region-of-practical-equivalence
+  rule against the highest density interval `hdi()` (Kruschke 2018). For
+  predictive model comparison without a marginal likelihood:
+  `gpum_waic(fit, data)` (Watanabe 2010) and `gpum_loo(fit, data)`, the latter
+  delegating to the `loo` package for Pareto-smoothed importance sampling
+  (Vehtari, Gelman and Gabry 2017), both backed by a new pointwise
+  log-likelihood path. For the weight of evidence:
+  `gpum_evidence(model, data)` estimates the log marginal likelihood by
+  thermodynamic integration along power posteriors from the prior to the
+  posterior (Gelman and Meng 1998; Friel and Pettitt 2008), and
+  `gpum_bayes_factor(model1, model0, data)` forms the Bayes factor from two
+  evidences. The thermodynamic integration reuses the existing sampler with no
+  kernel change, by raising the compiled likelihood to the rung power in the
+  bytecode. The evidence requires a proper prior and carries the
+  prior-sensitivity caveat of the Jeffreys-Lindley effect, stated in the
+  output. The posterior predictive check and Bayesian p-value are deferred
+  until the package can generate replicated data from an arbitrary likelihood.
+
 # gpumetropolis 0.3.0
 
 - `gpu_metropolis(method = "pt")` adds parallel tempering. Each chain

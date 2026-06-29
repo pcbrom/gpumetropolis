@@ -82,6 +82,9 @@ fn rust_gpu_metropolis(
     n_iter: i32,
     seed: f64,
     backend: &str,
+    proposal_mode: i32,
+    gamma: f64,
+    de_noise: f64,
 ) -> List {
     let ll_code: Vec<u32> = loglik_code.iter().map(|&v| v as u32).collect();
     let pr_code: Vec<u32> = prior_code.iter().map(|&v| v as u32).collect();
@@ -101,6 +104,9 @@ fn rust_gpu_metropolis(
         n_iter as usize,
         seed as u32,
         gpu::Backend::from_name(backend),
+        proposal_mode as u32,
+        gamma,
+        de_noise,
     );
     let draws: Vec<f64> = res.draws.iter().map(|&v| v as f64).collect();
     let accept_rate: Vec<f64> = res.accept_rate.iter().map(|&v| v as f64).collect();
@@ -114,6 +120,62 @@ fn rust_gpu_metropolis(
     )
 }
 
+/// Evaluate the compiled log-likelihood at a batch of parameter points.
+///
+/// Internal worker behind the `gpum_crlb()` observed-information diagnostic.
+/// `points` is the flat point-major buffer of `n_points` by `n_params`; the
+/// return is the log-likelihood, summed over observations, at each point.
+/// @noRd
+#[extendr]
+fn rust_loglik_batch(
+    loglik_code: Vec<i32>,
+    loglik_consts: Vec<f64>,
+    n_params: i32,
+    data: Vec<f64>,
+    n_cols: i32,
+    n_obs: i32,
+    points: Vec<f64>,
+) -> Vec<f64> {
+    let code: Vec<u32> = loglik_code.iter().map(|&v| v as u32).collect();
+    cpu_native::loglik_batch(
+        &code,
+        &loglik_consts,
+        n_params as usize,
+        &data,
+        n_cols as usize,
+        n_obs as usize,
+        &points,
+    )
+}
+
+/// Evaluate the compiled log-likelihood per observation at a batch of points.
+///
+/// Internal worker behind `gpum_waic()` and `gpum_loo()`. Returns the flat
+/// `n_points` by `n_obs` matrix in point-major order: entry `p * n_obs + i` is
+/// the log-likelihood of observation `i` at point `p`.
+/// @noRd
+#[extendr]
+fn rust_loglik_pointwise(
+    loglik_code: Vec<i32>,
+    loglik_consts: Vec<f64>,
+    n_params: i32,
+    data: Vec<f64>,
+    n_cols: i32,
+    n_obs: i32,
+    points: Vec<f64>,
+) -> Vec<f64> {
+    let code: Vec<u32> = loglik_code.iter().map(|&v| v as u32).collect();
+    cpu_native::loglik_pointwise(
+        &code,
+        &loglik_consts,
+        n_params as usize,
+        &data,
+        n_cols as usize,
+        n_obs as usize,
+        &points,
+    )
+}
+
 // Macro to generate exports.
 // This ensures exported functions are registered with R.
 // See corresponding C code in `entrypoint.c`.
@@ -123,4 +185,6 @@ extendr_module! {
     fn rust_metropolis_gaussian_mean;
     fn rust_available_backends;
     fn rust_gpu_metropolis;
+    fn rust_loglik_batch;
+    fn rust_loglik_pointwise;
 }

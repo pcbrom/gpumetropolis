@@ -66,6 +66,68 @@ fn interp_loglik(code: &[u32], consts: &[f64], params: &[f64], data: &[f64],
     acc
 }
 
+/// Evaluate the compiled log-likelihood, summed over observations, at each of
+/// the `points.len() / n_params` parameter vectors, returned in order. Reuses
+/// the JIT path with the interpreter fallback. This backs the host-side
+/// observed Fisher information / Cramer-Rao diagnostic, which needs the
+/// log-likelihood at a small stencil of points around the posterior mean; it
+/// is the same compiled log-likelihood the sampler evaluates, so the curvature
+/// it returns is consistent with the draws.
+#[allow(clippy::too_many_arguments)]
+pub fn loglik_batch(
+    code: &[u32],
+    consts: &[f64],
+    n_params: usize,
+    data: &[f64],
+    n_cols: usize,
+    n_obs: usize,
+    points: &[f64],
+) -> Vec<f64> {
+    let n_points = if n_params == 0 { 0 } else { points.len() / n_params };
+    let jit = crate::jit::compile_loglik(code, consts).ok();
+    (0..n_points)
+        .map(|p| {
+            let pb = p * n_params;
+            let params = &points[pb..pb + n_params];
+            match &jit {
+                Some(j) => j.eval(params, data, n_obs, n_cols),
+                None => interp_loglik(code, consts, params, data, n_cols, n_obs),
+            }
+        })
+        .collect()
+}
+
+/// Evaluate the compiled log-likelihood per observation at each of the
+/// `points.len() / n_params` parameter vectors. Returns a flat point-major
+/// then observation-major buffer, `out[p * n_obs + i]` the log-likelihood of
+/// observation `i` at point `p`. This backs the WAIC and PSIS-LOO model
+/// comparison, which need the pointwise log-likelihood matrix rather than the
+/// summed value. The interpreter is used per observation because the JIT path
+/// returns the sum over observations, not the per-observation terms; the work
+/// is parallel over points.
+#[allow(clippy::too_many_arguments)]
+pub fn loglik_pointwise(
+    code: &[u32],
+    consts: &[f64],
+    n_params: usize,
+    data: &[f64],
+    n_cols: usize,
+    n_obs: usize,
+    points: &[f64],
+) -> Vec<f64> {
+    let n_points = if n_params == 0 { 0 } else { points.len() / n_params };
+    let mut out = vec![0.0f64; n_points * n_obs];
+    out.par_chunks_mut(n_obs.max(1))
+        .enumerate()
+        .for_each(|(p, row)| {
+            let params = &points[p * n_params..(p + 1) * n_params];
+            for (i, slot) in row.iter_mut().enumerate().take(n_obs) {
+                *slot = vm_eval(code, consts, params, data, i * n_cols);
+            }
+        });
+    out
+}
+
 /// Run the whole-chain Metropolis sampler natively, parallel over chains.
 #[allow(clippy::too_many_arguments)]
 pub fn run(
@@ -82,6 +144,9 @@ pub fn run(
     temperatures: &[f64],
     n_iter: usize,
     seed: u32,
+    proposal_mode: u32,
+    gamma: f64,
+    de_noise: f64,
 ) -> ChainResult {
     let n_chains = init.len() / n_params;
     let two_pi = 6.283185307179586f64;
@@ -118,13 +183,46 @@ pub fn run(
             let mut cdraws = vec![0.0f32; n_iter * n_params];
 
             for t in 0..n_iter {
-                for j in 0..n_params {
+                if proposal_mode == 0 {
+                    // Gaussian random walk.
+                    for j in 0..n_params {
+                        ctr += 1;
+                        let u1 = rand_uniform(seedmix, ctr);
+                        ctr += 1;
+                        let u2 = rand_uniform(seedmix, ctr);
+                        let z = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
+                        prop[j] = state[j] + proposal_sd[pbase + j] * z;
+                    }
+                } else {
+                    // Differential Evolution: the proposal increment is the
+                    // scaled difference of two other chains' batch-start
+                    // states, read from the frozen `init` snapshot, plus a
+                    // small per-dimension jitter. The pair is redrawn each
+                    // iteration; with probability 0.1 the scale collapses to
+                    // 1.0 for an occasional mode-crossing jump (ter Braak 2006).
                     ctr += 1;
-                    let u1 = rand_uniform(seedmix, ctr);
+                    let mut a = (rand_uniform(seedmix, ctr) * n_chains as f64)
+                        as usize;
+                    if a >= n_chains { a = n_chains - 1; }
                     ctr += 1;
-                    let u2 = rand_uniform(seedmix, ctr);
-                    let z = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
-                    prop[j] = state[j] + proposal_sd[pbase + j] * z;
+                    let mut b = (rand_uniform(seedmix, ctr) * n_chains as f64)
+                        as usize;
+                    if b >= n_chains { b = n_chains - 1; }
+                    if b == a { b = (b + 1) % n_chains; }
+                    ctr += 1;
+                    let g = if rand_uniform(seedmix, ctr) < 0.1 { 1.0 } else { gamma };
+                    let abase = a * n_params;
+                    let bbase = b * n_params;
+                    for j in 0..n_params {
+                        ctr += 1;
+                        let u1 = rand_uniform(seedmix, ctr);
+                        ctr += 1;
+                        let u2 = rand_uniform(seedmix, ctr);
+                        let z = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
+                        let diff = init[abase + j] - init[bbase + j];
+                        prop[j] =
+                            state[j] + g * diff + de_noise * proposal_sd[pbase + j] * z;
+                    }
                 }
                 let plp = log_post(&prop);
                 ctr += 1;

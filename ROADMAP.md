@@ -19,13 +19,20 @@ These stay inside the Metropolis-Hastings family (their accept step is still
 Metropolis-Hastings), so they do not reopen decision #1, and they fit the
 many-chains GPU architecture.
 
-- Adaptive Metropolis: adapt the proposal covariance during warmup. Removes
-  the burden of tuning `proposal_sd` by hand, the main usability gap today.
-- Differential Evolution MCMC: a population sampler whose proposals use the
-  differences of other chains. Population-based, so it maps onto the chain
-  axis the package already parallelises.
-- Parallel tempering: chains at several temperatures with swaps, for
-  multimodal targets. The tempered chains parallelise across the chain axis.
+- Adaptive Metropolis (delivered, 0.2.0): adapt the proposal scale per chain
+  during warmup through Welford and Robbins-Monro, so `proposal_sd` is a seed
+  rather than a knob the user tunes by hand.
+- Parallel tempering (delivered, 0.3.0): chains at several temperatures with
+  swaps, for multimodal targets. The tempered chains parallelise across the
+  chain axis.
+- Differential Evolution MCMC (0.4.0): a population sampler whose proposals
+  use the differences of other chains, so the proposal aligns with the
+  correlation of the target through the ensemble geometry, with no explicit
+  covariance. Population-based, so it maps onto the chain axis the package
+  already parallelises. Two paths share `method = "de"`: a host-orchestrated
+  variant with a per-batch frozen population snapshot (0.4.0, default), and a
+  per-generation in-kernel variant under `de_sync = TRUE` (0.4.1) for the
+  canonical per-iteration mixing on harder targets.
 
 ## Tier 2: optimisation layers
 
@@ -110,9 +117,22 @@ discrete deliverable, validated before the next opens.
 - 0.2.0 (delivered 2026-06-02): Adaptive Metropolis diagonal per chain,
   per-chain proposal_sd in the kernel, `backend = "auto"` as default and
   `gpum_diagnose()` as the one-call diagnostic.
-- 0.3.0 (target 2026-06-15): Parallel Tempering for multimodal targets.
+- 0.3.0 (delivered 2026-06-15): Parallel Tempering for multimodal targets.
 - 0.4.0 (target 2026-06-29): Differential Evolution MCMC for correlated
-  targets without manual covariance.
+  targets without manual covariance, host-orchestrated with a per-batch
+  population snapshot. Ships `gpum_crlb()`, an optional Cramer-Rao reference
+  that compares the posterior spread to the inverse observed Fisher
+  information on regular targets, with guards that withhold the comparison
+  where its assumptions fail. Ships a formal Bayesian decision and comparison
+  layer: posterior probability of a hypothesis and the ROPE-and-HDI rule from
+  the draws, WAIC and PSIS-LOO for predictive comparison, and the marginal
+  likelihood and Bayes factor by thermodynamic integration. The posterior
+  predictive check and Bayesian p-value are deferred to a later release, since
+  they need replicated-data generation from an arbitrary likelihood, which the
+  synthesis path of 0.8.0 introduces.
+- 0.4.1: the per-generation in-kernel Differential Evolution path under
+  `de_sync = TRUE`, for the canonical per-iteration mixing on curved or
+  strongly correlated targets.
 - 0.5.0: bivariate copula workflow with the four common families.
 - 0.6.0: per-column marginal auto-selection.
 - 0.7.0: vine copula for `d > 2`.

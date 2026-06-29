@@ -533,3 +533,55 @@ is not re-run. The v0.7 vereditos on M3 and M4 stand. The v0.3.0
 release notes explain the parallel-tempering path; this amendment
 records the focused empirical evidence on the one cell where it
 matters most.
+
+### v1.0, 2026-06-29: Differential Evolution worked cases
+
+Status of this amendment. Recorded with the v0.4.0 release of
+`gpu_metropolis(method = "de")`. It states the protocol of two worked
+cases that exercise the Differential Evolution path on correlated and
+curved targets; both are reproducible from a fixed seed and serve as the
+living-book vignettes `demc_banana` and `demc_correlated`. The full
+registered M3 and M4 factorial with Differential Evolution against
+diagonal adaptive Metropolis and `nimble` stays the un-run target; these
+two cases are demonstrations of correctness on geometries the method is
+built for, not the factorial.
+
+Case A, the twisted Gaussian. The target is the banana of Haario,
+Saksman and Tamminen (2001) in two dimensions, log-density
+`-x1^2/200 - 0.5 (x2 + 0.1 x1^2 - 10)^2`, declared through the prior
+with no data term. Forty chains start overdispersed across the ridge,
+8000 iterations per chain, seed 1. The comparison is the default
+`method = "rwm"` with per-chain diagonal adaptation against
+`method = "de"`, on the same chains and iteration budget. The response
+is the split R-hat and the effective sample size per coordinate; the
+claim under test is that the difference proposal follows the curved
+ridge where a diagonal proposal cannot, shown as a lower R-hat at equal
+cost.
+
+Case B, the correlated bivariate posterior. Data are `n = 500` draws
+from a bivariate normal with known covariance of correlation
+`rho = 0.9`; with a flat prior the posterior of the mean is exactly
+`N2(ybar, Sigma / n)`. Sixteen chains, 8000 iterations per chain, seed
+1. Two responses: the recovered correlation against the target 0.9, and
+the posterior covariance against the Cramer-Rao bound. Because the model
+is regular and the posterior is Gaussian, the inverse Fisher information
+equals `Sigma / n` in closed form, so the Bernstein-von Mises
+identification of the posterior covariance with the inverse Fisher
+information is an equality, not an asymptotic approximation. The bound is
+computed with `gpum_crlb()`, by a central-difference Hessian of the same
+compiled log-likelihood the sampler used, and cross-checked against the
+analytic `solve(n * Sigma^{-1})`.
+
+Scope of the Cramer-Rao reference. The reference is reported only where
+the model is regular, the posterior is converged and unimodal, and the
+observed information is positive definite; `gpum_crlb()` returns a
+not-applicable verdict otherwise. It is a frequentist asymptotic,
+prior-free object and does not transfer to the bimodal M2 of amendment
+v0.9 or to parameters on a boundary, where the posterior is not
+asymptotically normal. The reference is therefore a validation tool on
+regular targets, not a claim layered onto every fit.
+
+What this amendment does not change. The registered factorial of section
+4 is not re-run. The v0.7 and v0.9 vereditos stand. The v0.4.0 release
+notes describe the Differential Evolution path; this amendment records
+the protocol of the two reproducible worked cases.

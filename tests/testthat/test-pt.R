@@ -91,5 +91,5 @@ test_that("PT fit prints with the method label and gpum_diagnose collapses to th
   diag_out <- gpum_diagnose(fit, plot = FALSE, return_data = TRUE)
   expect_equal(nrow(diag_out$summary), 1L)
   expect_named(diag_out, c("summary", "verdict", "adaptation",
-                           "adaptation_hint", "swap_hint"))
+                           "adaptation_hint", "swap_hint", "de_hint"))
 })

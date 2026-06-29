@@ -4,7 +4,7 @@
 \alias{gpum_diagnose}
 \title{One-call diagnostic: convergence stats, plots and verdict.}
 \usage{
-gpum_diagnose(fit, plot = TRUE, return_data = FALSE)
+gpum_diagnose(fit, plot = TRUE, return_data = FALSE, crlb = NULL)
 }
 \arguments{
 \item{fit}{A \code{gpum_fit} object from \code{\link[=gpu_metropolis]{gpu_metropolis()}}.}
@@ -13,6 +13,11 @@ gpum_diagnose(fit, plot = TRUE, return_data = FALSE)
 
 \item{return_data}{Whether to return the structured stats invisibly.
 Default \code{FALSE}; the function then returns \code{NULL} invisibly.}
+
+\item{crlb}{Optional \code{gpum_crlb} object from \code{\link[=gpum_crlb]{gpum_crlb()}}. When supplied
+and applicable, the printout adds a posterior-sd against Cramer-Rao-bound
+comparison and the density panels overlay the asymptotic-normal reference
+from the inverse Fisher information. Default \code{NULL}.}
 }
 \value{
 When \code{return_data = TRUE}, a list with \code{summary} (one row

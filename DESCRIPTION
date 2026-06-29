@@ -1,6 +1,6 @@
 Package: gpumetropolis
 Title: GPU-Portable Vendor-Agnostic Metropolis-Hastings Sampler
-Version: 0.3.0
+Version: 0.4.0
 Authors@R:
     person("Pedro", "Carvalho Brom", , "pcbrom@gmail.com",
            role = c("aut", "cre", "cph"),
@@ -30,7 +30,8 @@ Suggests:
     knitr,
     rmarkdown,
     evd,
-    diptest
+    diptest,
+    loo
 Config/testthat/edition: 3
 VignetteBuilder: knitr
 URL: https://github.com/pcbrom/gpumetropolis

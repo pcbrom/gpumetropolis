@@ -110,7 +110,8 @@ fn metropolis_block_kernel(
     init: &Array<f32>,
     proposal_sd: &Array<f32>,
     temperatures: &Array<f32>,
-    meta: &Array<u32>,        // [n_instr, n_params, n_cols, n_obs, n_iter, prior_n, seed]
+    de_params: &Array<f32>,   // [gamma, de_noise]
+    meta: &Array<u32>,        // [n_instr, n_params, n_cols, n_obs, n_iter, prior_n, seed, proposal_mode]
     out_draws: &mut Array<f32>,
     out_accept: &mut Array<f32>,
     out_logpost: &mut Array<f32>,
@@ -132,6 +133,7 @@ fn metropolis_block_kernel(
         let n_iter = usize::cast_from(meta[4]);
         let prior_n = usize::cast_from(meta[5]);
         let seed = meta[6];
+        let proposal_mode = meta[7];
         let pbase = chain * n_params;
         // The base seed is hashed before the chain offset is added, so two
         // runs with consecutive integer seeds get well-separated counter
@@ -186,15 +188,63 @@ fn metropolis_block_kernel(
         while t < n_iter {
             // Thread 0 proposes; the block sees the proposal after the barrier.
             if tid == 0 {
-                let mut k = 0usize;
-                while k < n_params {
+                if proposal_mode == 0u32 {
+                    // Gaussian random walk.
+                    let mut k = 0usize;
+                    while k < n_params {
+                        ctr += 1u32;
+                        let u1 = rand_uniform(seedmix, ctr);
+                        ctr += 1u32;
+                        let u2 = rand_uniform(seedmix, ctr);
+                        let z = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
+                        prop[k] = state[k] + proposal_sd[pbase + k] * z;
+                        k += 1;
+                    }
+                } else {
+                    // Differential Evolution: the proposal increment is the
+                    // scaled difference of two other chains' batch-start
+                    // states, read from the frozen `init` snapshot, plus a
+                    // small per-dimension jitter. The pair is redrawn each
+                    // iteration; with probability 0.1 the scale collapses to
+                    // 1.0 for an occasional mode-crossing jump (ter Braak 2006).
                     ctr += 1u32;
-                    let u1 = rand_uniform(seedmix, ctr);
+                    let mut a = usize::cast_from(
+                        rand_uniform(seedmix, ctr) * f32::cast_from(n_chains));
+                    if a >= n_chains {
+                        a = n_chains - 1usize;
+                    }
                     ctr += 1u32;
-                    let u2 = rand_uniform(seedmix, ctr);
-                    let z = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
-                    prop[k] = state[k] + proposal_sd[pbase + k] * z;
-                    k += 1;
+                    let mut b = usize::cast_from(
+                        rand_uniform(seedmix, ctr) * f32::cast_from(n_chains));
+                    if b >= n_chains {
+                        b = n_chains - 1usize;
+                    }
+                    if b == a {
+                        b += 1usize;
+                        if b >= n_chains {
+                            b = 0usize;
+                        }
+                    }
+                    ctr += 1u32;
+                    let mut g = de_params[0];
+                    if rand_uniform(seedmix, ctr) < 0.1 {
+                        g = 1.0f32;
+                    }
+                    let noise = de_params[1];
+                    let abase = a * n_params;
+                    let bbase = b * n_params;
+                    let mut k = 0usize;
+                    while k < n_params {
+                        ctr += 1u32;
+                        let u1 = rand_uniform(seedmix, ctr);
+                        ctr += 1u32;
+                        let u2 = rand_uniform(seedmix, ctr);
+                        let z = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
+                        let diff = init[abase + k] - init[bbase + k];
+                        prop[k] =
+                            state[k] + g * diff + noise * proposal_sd[pbase + k] * z;
+                        k += 1;
+                    }
                 }
             }
             sync_cube();
@@ -286,6 +336,8 @@ fn run_block<R: Runtime>(
     temperatures: &[f32],
     n_iter: usize,
     seed: u32,
+    proposal_mode: u32,
+    de_params: &[f32],
 ) -> ChainResult {
     let n_chains = init.len() / n_params;
     let client = R::client(&Default::default());
@@ -298,7 +350,8 @@ fn run_block<R: Runtime>(
     let init_h = client.create_from_slice(f32::as_bytes(init));
     let psd_h = client.create_from_slice(f32::as_bytes(proposal_sd));
     let temp_h = client.create_from_slice(f32::as_bytes(temperatures));
-    let meta: [u32; 7] = [
+    let de_h = client.create_from_slice(f32::as_bytes(de_params));
+    let meta: [u32; 8] = [
         (code.len() / 2) as u32,
         n_params as u32,
         n_cols as u32,
@@ -306,6 +359,7 @@ fn run_block<R: Runtime>(
         n_iter as u32,
         (prior_code.len() / 2) as u32,
         seed,
+        proposal_mode,
     ];
     let meta_h = client.create_from_slice(u32::as_bytes(&meta));
 
@@ -331,6 +385,7 @@ fn run_block<R: Runtime>(
             ArrayArg::from_raw_parts(init_h, init.len()),
             ArrayArg::from_raw_parts(psd_h, proposal_sd.len()),
             ArrayArg::from_raw_parts(temp_h, temperatures.len()),
+            ArrayArg::from_raw_parts(de_h, de_params.len().max(1)),
             ArrayArg::from_raw_parts(meta_h, meta.len()),
             ArrayArg::from_raw_parts(draws_h.clone(), n_iter * n_chains * n_params),
             ArrayArg::from_raw_parts(accept_h.clone(), n_chains),
@@ -376,6 +431,9 @@ pub fn gpu_metropolis_chain(
     n_iter: usize,
     seed: u32,
     backend: crate::gpu::Backend,
+    proposal_mode: u32,
+    gamma: f64,
+    de_noise: f64,
 ) -> ChainResult {
     // The CPU backend uses a native Rust implementation in f64; the CubeCL CPU
     // runtime is slow for this interpreter-style kernel.
@@ -383,6 +441,7 @@ pub fn gpu_metropolis_chain(
         return crate::cpu_native::run(
             code, consts, prior_code, prior_consts, n_params, data, n_cols,
             n_obs, init, proposal_sd, temperatures, n_iter, seed,
+            proposal_mode, gamma, de_noise,
         );
     }
     // GPU backends are compiled in only when the matching Cargo feature is on.
@@ -395,19 +454,20 @@ pub fn gpu_metropolis_chain(
             f32v(consts), f32v(prior_consts), f32v(data), f32v(init),
             f32v(proposal_sd), f32v(temperatures),
         );
+        let de_params: [f32; 2] = [gamma as f32, de_noise as f32];
         match backend {
             #[cfg(feature = "cuda")]
             crate::gpu::Backend::Cuda => {
                 return run_block::<cubecl::cuda::CudaRuntime>(
                     code, &c, prior_code, &pc, n_params, &d, n_cols, n_obs,
-                    &i, &p, &tmp, n_iter, seed,
+                    &i, &p, &tmp, n_iter, seed, proposal_mode, &de_params,
                 );
             }
             #[cfg(feature = "vulkan")]
             crate::gpu::Backend::Vulkan => {
                 return run_block::<cubecl::wgpu::WgpuRuntime>(
                     code, &c, prior_code, &pc, n_params, &d, n_cols, n_obs,
-                    &i, &p, &tmp, n_iter, seed,
+                    &i, &p, &tmp, n_iter, seed, proposal_mode, &de_params,
                 );
             }
             _ => {}

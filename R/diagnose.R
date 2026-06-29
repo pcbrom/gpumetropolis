@@ -24,6 +24,10 @@
 #' @param plot Whether to open the diagnostic plot. Default `TRUE`.
 #' @param return_data Whether to return the structured stats invisibly.
 #'   Default `FALSE`; the function then returns `NULL` invisibly.
+#' @param crlb Optional `gpum_crlb` object from [gpum_crlb()]. When supplied
+#'   and applicable, the printout adds a posterior-sd against Cramer-Rao-bound
+#'   comparison and the density panels overlay the asymptotic-normal reference
+#'   from the inverse Fisher information. Default `NULL`.
 #'
 #' @return When `return_data = TRUE`, a list with `summary` (one row
 #'   per parameter), `verdict` (the convergence diagnosis and a
@@ -34,11 +38,16 @@
 #'
 #' @seealso [gpu_metropolis()], [rhat()], [ess()]
 #' @export
-gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
+gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE,
+                          crlb = NULL) {
   if (!inherits(fit, "gpum_fit")) {
     stop("`fit` must be a gpum_fit from gpu_metropolis().", call. = FALSE)
   }
+  if (!is.null(crlb) && !inherits(crlb, "gpum_crlb")) {
+    stop("`crlb` must be a gpum_crlb object from gpum_crlb().", call. = FALSE)
+  }
   is_pt <- identical(fit$method, "pt")
+  is_de <- identical(fit$method, "de")
   # In parallel tempering only the cold chain (T = 1, first column of the
   # draws array) samples the target posterior. The hot chains feed it
   # through swap proposals but are not posterior samples themselves, so
@@ -94,7 +103,7 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
   # = t^{-2/3}), so a short warmup leaves the chain still climbing at
   # the warmup boundary. Doubling the warmup is the canonical knob.
   adaptation_hint <- NULL
-  if (!is.null(fit$adaptation)) {
+  if (!is.null(fit$adaptation) && !is_de) {
     ah <- fit$adaptation$accept_history
     if (is.matrix(ah) && ncol(ah) >= 1L) {
       target <- if (np == 1L) 0.44 else 0.234
@@ -106,6 +115,31 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
                  "Consider warmup = %d to let the per-chain scale ",
                  "plateau."),
           last_mean, target, 2L * fit$warmup
+        )
+      }
+    }
+  }
+
+  # Differential Evolution collapse hint: the difference proposal degenerates
+  # when the ensemble loses its spread in a dimension, since the difference of
+  # two near-identical chains is near zero. When any dimension's final
+  # population spread falls below 1% of its widest value over the run, the
+  # ensemble has collapsed there and the jitter is carrying the chain alone.
+  de_hint <- NULL
+  if (is_de && !is.null(fit$adaptation$disp_history)) {
+    dh <- fit$adaptation$disp_history
+    if (is.matrix(dh) && ncol(dh) >= 1L) {
+      final_disp <- dh[, ncol(dh)]
+      peak_disp <- apply(dh, 1L, max, na.rm = TRUE)
+      collapsed <- which(is.finite(final_disp) & is.finite(peak_disp) &
+                         peak_disp > 0 & final_disp < 0.01 * peak_disp)
+      if (length(collapsed) >= 1L) {
+        de_hint <- sprintf(
+          paste0("Ensemble spread collapsed in %s (final %.2e vs peak ",
+                 "%.2e). Raise de_noise or n_chains to keep the ",
+                 "difference proposal alive."),
+          paste(params[collapsed], collapse = ", "),
+          final_disp[collapsed[1L]], peak_disp[collapsed[1L]]
         )
       }
     }
@@ -133,7 +167,13 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
     }
   }
 
-  method_label <- if (is_pt) "pt, cold chain" else (fit$method %||% "rwm")
+  method_label <- if (is_pt) {
+    "pt, cold chain"
+  } else if (is_de) {
+    sprintf("de, gamma %.3f", fit$gamma %||% NA_real_)
+  } else {
+    fit$method %||% "rwm"
+  }
   cat(sprintf("<gpum_diagnose: %s>\n", verdict[1L]))
   cat(sprintf("  method %s, backend %s, chains %d, iterations %d (warmup %d, %s)\n",
               method_label, fit$backend, fit$n_chains, fit$n_iter, fit$warmup,
@@ -147,16 +187,30 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
   if (!is.null(swap_hint)) {
     cat("  Hint: ", swap_hint, "\n", sep = "")
   }
+  if (!is.null(de_hint)) {
+    cat("  Hint: ", de_hint, "\n", sep = "")
+  }
+  if (!is.null(crlb) && isTRUE(crlb$applicable)) {
+    cat("  Cramer-Rao (asymptotic, prior-free) reference:\n")
+    for (p in seq_len(np)) {
+      cat(sprintf("    %-11s posterior sd %.4g vs bound %.4g (ratio %.2f)\n",
+                  params[p], summary$sd[p], crlb$crlb_sd[p],
+                  summary$sd[p] / crlb$crlb_sd[p]))
+    }
+  } else if (!is.null(crlb)) {
+    cat("  Cramer-Rao reference not applicable: ", crlb$note, "\n", sep = "")
+  }
 
   if (isTRUE(plot)) {
-    .gpum_diagnose_plot(fit, params)
+    .gpum_diagnose_plot(fit, params, crlb = crlb)
   }
 
   if (isTRUE(return_data)) {
     invisible(list(summary = summary, verdict = verdict,
                    adaptation = fit$adaptation,
                    adaptation_hint = adaptation_hint,
-                   swap_hint = swap_hint))
+                   swap_hint = swap_hint,
+                   de_hint = de_hint))
   } else {
     invisible(NULL)
   }
@@ -174,8 +228,10 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
 # (trace, density, running mean, ACF). When the fit has adaptation
 # book-keeping, an extra row shows the per-chain acceptance over the
 # warmup batches with the asymptotic optimum as a horizontal reference.
-.gpum_diagnose_plot <- function(fit, params) {
+.gpum_diagnose_plot <- function(fit, params, crlb = NULL) {
   is_pt <- identical(fit$method, "pt")
+  is_de <- identical(fit$method, "de")
+  has_crlb <- inherits(crlb, "gpum_crlb") && isTRUE(crlb$applicable)
   np <- fit$n_params
   has_adapt <- !is.null(fit$adaptation)
   has_swap <- is_pt && !is.null(fit$adaptation$swap_history) &&
@@ -206,6 +262,12 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
     dens <- stats::density(v)
     plot(dens, xlab = params[p], ylab = "density",
          main = "Density (pooled)", lwd = 2)
+    if (has_crlb) {
+      # Asymptotic-normal reference from the inverse Fisher information.
+      xs <- seq(min(dens$x), max(dens$x), length.out = 200L)
+      graphics::lines(xs, stats::dnorm(xs, crlb$at[p], crlb$crlb_sd[p]),
+                      col = "red", lty = 2, lwd = 1.5)
+    }
 
     running <- apply(M, 2L, function(col) cumsum(col) / seq_along(col))
     graphics::matplot(running, type = "l", lty = 1,
@@ -224,7 +286,34 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE) {
     graphics::abline(h = c(-ci, ci), col = "blue", lty = 2)
   }
 
-  if (has_adapt) {
+  if (has_adapt && is_de) {
+    # Differential Evolution diagnostic row: acceptance per chain across the
+    # batches, the ensemble spread per dimension across the batches (the
+    # quantity that drives the difference proposal), the final per-chain
+    # noise scale and a summary box.
+    ah <- fit$adaptation$accept_history
+    nb <- ncol(ah)
+    graphics::matplot(seq_len(nb), t(ah), type = "l", lty = 1,
+                      xlab = "batch", ylab = "accept rate",
+                      main = "DE: accept per chain",
+                      ylim = c(0, 1))
+    dh <- fit$adaptation$disp_history
+    graphics::matplot(seq_len(ncol(dh)), t(dh), type = "l", lty = 1,
+                      xlab = "batch", ylab = "ensemble spread",
+                      main = "DE: ensemble spread per dim")
+    graphics::abline(h = 0, col = "grey50")
+    fsd <- fit$adaptation$final_proposal_sd
+    graphics::matplot(seq_len(nrow(fsd)), fsd, type = "b", lty = 1,
+                      xlab = "chain", ylab = "noise scale",
+                      main = "DE: final noise scale")
+    graphics::plot.new()
+    graphics::plot.window(xlim = c(0, 1), ylim = c(0, 1))
+    graphics::text(0.5, 0.5,
+                   sprintf("gamma = %.3f\nde_noise = %.1e\n%d batches",
+                           fit$gamma %||% NA_real_, fit$de_noise %||% NA_real_,
+                           nb),
+                   cex = 0.9)
+  } else if (has_adapt) {
     ah <- fit$adaptation$accept_history
     nb <- ncol(ah)
     target <- if (np == 1L) 0.44 else 0.234

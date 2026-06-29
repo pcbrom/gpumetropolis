@@ -1,0 +1,191 @@
+---
+title: "Differential Evolution on a correlated posterior, with a Cramer-Rao reference"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Differential Evolution on a correlated posterior, with a Cramer-Rao reference}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>",
+                      fig.width = 7, fig.height = 4.2)
+Sys.setenv(RAYON_NUM_THREADS = "2")
+```
+
+This vignette is the fourth chapter of the worked-case companion. The target
+is a strongly correlated bivariate posterior whose covariance is known in
+closed form, so the geometry the sampler recovers can be checked against the
+Cramer-Rao bound, the inverse Fisher information. The call is
+`gpu_metropolis(method = "de")` of v0.4.0.
+
+## The model
+
+Let $y_1, \ldots, y_n$ be drawn from a bivariate normal with unknown mean
+$\mu = (\mu_1, \mu_2)$ and a known covariance $\Sigma$ with correlation
+$\rho = 0.9$. With a flat prior on $\mu$, the posterior is
+
+$$
+\mu \mid y \sim \mathcal{N}_2\!\left(\bar y,\; \Sigma / n\right),
+$$
+
+a bivariate normal carrying the same correlation $0.9$. A diagonal
+random-walk proposal cannot represent that correlation in a single move; the
+difference proposal of Differential Evolution can.
+
+```{r data}
+library(gpumetropolis)
+set.seed(1)
+rho   <- 0.9
+Sigma <- matrix(c(1, rho, rho, 1), 2, 2)
+n     <- 500
+L     <- chol(Sigma)
+y     <- matrix(stats::rnorm(n * 2), n, 2) %*% L
+y[, 1] <- y[, 1] + 2      # truth: mu1 = 2
+y[, 2] <- y[, 2] - 1      # truth: mu2 = -1
+ybar     <- colMeans(y)
+post_cov <- Sigma / n     # closed-form posterior covariance
+```
+
+The per-observation Gaussian log-likelihood uses $\Sigma^{-1}$ as constants.
+
+```{r model}
+Si <- solve(Sigma)
+loglik <- stats::as.formula(sprintf(
+  "~ -0.5 * (%.6f*(y1-mu1)^2 + 2*%.6f*(y1-mu1)*(y2-mu2) + %.6f*(y2-mu2)^2)",
+  Si[1, 1], Si[1, 2], Si[2, 2]))
+model <- gpum_model(loglik, params = c("mu1", "mu2"), data = c("y1", "y2"))
+```
+
+## Random walk against Differential Evolution
+
+Both methods sample this unimodal posterior correctly; the difference is
+efficiency. The diagonal random walk pays for ignoring the correlation with a
+lower effective sample size per iteration.
+
+```{r fits}
+dat <- list(y1 = y[, 1], y2 = y[, 2])
+fit_rwm <- gpu_metropolis(model, data = dat, n_iter = 8000, n_chains = 16,
+                          method = "rwm", seed = 1, backend = "cpu")
+fit_de  <- gpu_metropolis(model, data = dat, n_iter = 8000, n_chains = 16,
+                          method = "de", seed = 1, backend = "cpu")
+
+eff <- function(fit) c(
+  ess_mu1 = ess(fit$draws[, , "mu1"], 0),
+  ess_mu2 = ess(fit$draws[, , "mu2"], 0),
+  corr    = stats::cor(as.vector(fit$draws[, , "mu1"]),
+                       as.vector(fit$draws[, , "mu2"]))
+)
+rbind(rwm = eff(fit_rwm), de = eff(fit_de))
+```
+
+The recovered correlation sits near the target $0.9$ for both, and the
+Differential Evolution run reaches a higher effective sample size on the
+correlated geometry.
+
+## The Cramer-Rao reference
+
+For $n$ independent draws from a normal with known $\Sigma$, the Fisher
+information about the mean is $I(\mu) = n\,\Sigma^{-1}$, so the Cramer-Rao
+lower bound on the covariance of an unbiased estimator is
+
+$$
+I(\mu)^{-1} = \Sigma / n ,
+$$
+
+which is exactly the posterior covariance here. This model is regular and
+the posterior is Gaussian, so the Bernstein-von Mises identification of the
+posterior covariance with the inverse Fisher information is not an
+approximation but an equality; the comparison is a clean check that the
+sampler recovers the information-bound geometry rather than a frequentist
+claim layered onto a Bayesian fit. The estimator-theory reading is that the
+posterior mean here is consistent and asymptotically efficient: it concentrates
+on the true mean and attains the Cramer-Rao bound, so the bound is the natural
+yardstick for its spread.
+
+The package computes the bound directly with `gpum_crlb()`, which forms the
+observed Fisher information by a central-difference Hessian of the same
+compiled log-likelihood the sampler used, then inverts it. It returns the
+bound beside the empirical posterior spread.
+
+```{r crlb}
+cr <- gpum_crlb(fit_de, data = dat)
+cr
+```
+
+The reported bound matches the analytic inverse Fisher information
+`solve(n * Sigma^{-1}) = Sigma / n` for this model, and the posterior spread
+from the Differential Evolution draws tracks it to within Monte Carlo error,
+correlation included.
+
+```{r crlb-check}
+analytic_crlb <- solve(n * Si)              # = Sigma / n, in closed form
+round(cbind(gpum_crlb = cr$crlb_sd,
+            analytic  = sqrt(diag(analytic_crlb))), 4)
+```
+
+```{r fig, fig.alt = "Differential Evolution draws of the correlated posterior with the Cramer-Rao 95 percent ellipse overlaid."}
+d1 <- as.vector(fit_de$draws[, , "mu1"])
+d2 <- as.vector(fit_de$draws[, , "mu2"])
+plot(d1, d2, pch = ".", xlab = "mu1", ylab = "mu2",
+     main = "DE draws and the Cramer-Rao 95% ellipse")
+theta <- seq(0, 2 * pi, length.out = 200)
+ell <- t(ybar + t(chol(cr$crlb)) %*% rbind(cos(theta), sin(theta)) *
+         sqrt(stats::qchisq(0.95, df = 2)))
+graphics::lines(ell[, 1], ell[, 2], col = "red", lwd = 2)
+```
+
+## Consistency and the n to the minus one-half rate
+
+The Cramer-Rao comparison at a single $n$ is one slice of a sharper statement:
+as the data grow, the posterior mean concentrates on the truth (consistency)
+and its spread shrinks at the rate $n^{-1/2}$ set by the bound (asymptotic
+efficiency). The appendix below makes both visible by refitting the same model
+at a sequence of sample sizes and reading off the error of the posterior mean
+against the truth and the posterior standard deviation against the closed-form
+$\sqrt{1/n}$ reference. This is a simulation check, possible only because the
+truth is known here; it is a validation of the theory, not a per-fit
+diagnostic.
+
+```{r consistency}
+ns <- c(125, 500, 2000)
+rows <- lapply(ns, function(nn) {
+  yy <- matrix(stats::rnorm(nn * 2), nn, 2) %*% L
+  yy[, 1] <- yy[, 1] + 2
+  yy[, 2] <- yy[, 2] - 1
+  f <- gpu_metropolis(model, data = list(y1 = yy[, 1], y2 = yy[, 2]),
+                      n_iter = 4000, n_chains = 12, method = "de",
+                      seed = 1, backend = "cpu")
+  m1 <- as.vector(f$draws[, , "mu1"])
+  data.frame(n = nn,
+             mean_error = abs(mean(m1) - 2),   # distance of the estimate to truth
+             post_sd = stats::sd(m1),
+             crlb_sd = sqrt(1 / nn))           # Sigma_11 / n, here Sigma_11 = 1
+})
+tab <- do.call(rbind, rows)
+tab$sd_ratio <- tab$post_sd / tab$crlb_sd
+tab
+```
+
+The error of the posterior mean stays within the posterior standard deviation
+at every size and shrinks with it as the sample grows, the signature of
+consistency; the single-replication error is itself noisy, so it is the trend
+and the scale, not a strict ordering, that carry the point. The posterior
+standard deviation tracks the $\sqrt{1/n}$ reference with a ratio near one at
+every size, the signature of asymptotic efficiency: it halves as $n$
+quadruples, from about 0.089 at $n = 125$ to 0.022 at $n = 2000$. Consistency is the more robust of the two: it can hold on
+identifiable models where the normal approximation behind the efficiency rate
+does not, which is why `gpum_crlb()` reports the bound only where the stronger
+conditions also hold.
+
+## Honest positioning
+
+The agreement above is what theory predicts for a regular Gaussian model; it
+is a validation of the sampler, not a discovery. The reference is worth
+stating precisely because it does not transfer to the harder targets the
+package also serves: the bimodal M2 of the parallel-tempering chapter and any
+copula parameter near the independence boundary violate the regularity the
+Cramer-Rao bound assumes, and the posterior there is not asymptotically
+normal. The lesson of this chapter is narrow and exact: on a regular
+correlated target, `method = "de"` recovers the full covariance, correlation
+included, that the inverse Fisher information prescribes.

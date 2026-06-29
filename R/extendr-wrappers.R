@@ -30,6 +30,18 @@ rust_available_backends <- function() .Call(wrap__rust_available_backends)
 #' compiled bytecode; `draws` is returned flat in the column-major order of an
 #' R array of dimension (n_iter, n_chains, n_params).
 #' @noRd
-rust_gpu_metropolis <- function(loglik_code, loglik_consts, n_params, data, n_cols, n_obs, prior_code, prior_consts, init, proposal_sd, temperatures, n_iter, seed, backend) .Call(wrap__rust_gpu_metropolis, loglik_code, loglik_consts, n_params, data, n_cols, n_obs, prior_code, prior_consts, init, proposal_sd, temperatures, n_iter, seed, backend)
+rust_gpu_metropolis <- function(loglik_code, loglik_consts, n_params, data, n_cols, n_obs, prior_code, prior_consts, init, proposal_sd, temperatures, n_iter, seed, backend, proposal_mode, gamma, de_noise) .Call(wrap__rust_gpu_metropolis, loglik_code, loglik_consts, n_params, data, n_cols, n_obs, prior_code, prior_consts, init, proposal_sd, temperatures, n_iter, seed, backend, proposal_mode, gamma, de_noise)
+
+#' Evaluate the compiled log-likelihood at a batch of parameter points.
+#'
+#' Internal worker behind the `gpum_crlb()` observed-information diagnostic.
+#' @noRd
+rust_loglik_batch <- function(loglik_code, loglik_consts, n_params, data, n_cols, n_obs, points) .Call(wrap__rust_loglik_batch, loglik_code, loglik_consts, n_params, data, n_cols, n_obs, points)
+
+#' Evaluate the compiled log-likelihood per observation at a batch of points.
+#'
+#' Internal worker behind `gpum_waic()` and `gpum_loo()`.
+#' @noRd
+rust_loglik_pointwise <- function(loglik_code, loglik_consts, n_params, data, n_cols, n_obs, points) .Call(wrap__rust_loglik_pointwise, loglik_code, loglik_consts, n_params, data, n_cols, n_obs, points)
 
 # nolint end

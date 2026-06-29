@@ -13,9 +13,12 @@ gpu_metropolis(
   n_chains = 4L,
   warmup = NULL,
   adapt = TRUE,
-  method = c("rwm", "pt"),
+  method = c("rwm", "pt", "de"),
   temperatures = NULL,
   swap_every = NULL,
+  gamma = NULL,
+  de_noise = 0.001,
+  de_every = NULL,
   seed = 1L,
   backend = c("auto", "cpu", "cuda", "vulkan")
 )
@@ -60,17 +63,40 @@ Set \code{FALSE} to keep the trim-only warmup of 0.1.x.}
 \item{method}{Sampling method: \code{"rwm"} (default) is the random-walk
 Metropolis with optional per-chain adaptation; \code{"pt"} is parallel
 tempering with one chain per temperature on the same target and
-adjacent-pair swap proposals between batches. The cold chain
-(\code{T = 1}) provides the posterior samples in \code{"pt"}.}
+adjacent-pair swap proposals between batches, where the cold chain
+(\code{T = 1}) provides the posterior samples; \code{"de"} is Differential
+Evolution MCMC, whose proposal for each chain is the scaled
+difference of two other chains plus a small jitter, so the proposal
+aligns with the correlation of the target through the ensemble
+geometry without an explicit covariance (ter Braak 2006). The \code{"de"}
+path needs at least 4 chains.}
 
 \item{temperatures}{Numeric vector of length \code{n_chains}, the
-temperature of each chain in \code{method = "pt"}. Ignored for \code{"rwm"}.
-When \code{NULL} (default), a geometric ladder from 1 to 10 is used.
-The first entry must be 1 for the cold chain.}
+temperature of each chain in \code{method = "pt"}. Ignored for the other
+methods. When \code{NULL} (default), a geometric ladder from 1 to 10 is
+used. The first entry must be 1 for the cold chain.}
 
 \item{swap_every}{Integer, the iteration count between swap proposals
-in \code{method = "pt"}. Ignored for \code{"rwm"}. When \code{NULL} (default),
-uses \code{max(n_chains, 10)}.}
+in \code{method = "pt"}. Ignored for the other methods. When \code{NULL}
+(default), uses \code{max(n_chains, 10)}.}
+
+\item{gamma}{Scale of the difference vector in \code{method = "de"}.
+Ignored for the other methods. When \code{NULL} (default), uses
+\code{2.38 / sqrt(2 * n_params)}, the value optimal for an approximately
+Gaussian target (ter Braak 2006). With probability 0.1 each
+iteration the scale collapses to 1 for an occasional mode-crossing
+jump.}
+
+\item{de_noise}{Non-negative factor for the per-dimension jitter added
+to the \code{method = "de"} proposal, in units of the current per-chain
+per-dimension scale. A small positive value keeps the chain
+irreducible when the ensemble collapses onto a subspace. Default
+\code{1e-3}. Ignored for the other methods.}
+
+\item{de_every}{Integer, the iteration count between refreshes of the
+frozen population snapshot used for the difference vectors in
+\code{method = "de"}. Ignored for the other methods. When \code{NULL}
+(default), uses \code{max(n_chains, 10)}.}
 
 \item{seed}{Integer seed. Each chain advances its own counter-based stream
 from a triple32 hash; the seed is itself hashed, so runs with consecutive

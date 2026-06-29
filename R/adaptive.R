@@ -311,6 +311,117 @@
   )
 }
 
+# Orchestrate a Differential Evolution MCMC run (path A: host-orchestrated,
+# the difference pool is the population frozen at the start of each batch).
+# Each batch advances every chain for `de_every` iterations against the
+# snapshot carried in `init_flat`; the kernel draws the difference pairs
+# internally and reads the frozen population from that same snapshot, so no
+# extra buffer is needed and the chains stay independent within a batch.
+# Between batches the snapshot refreshes to the new population. Adaptation,
+# when on, tracks the per-chain per-dimension spread during warmup and freezes
+# it at the end of warmup, so `de_noise` scales a stationary jitter during
+# sampling. Correctness rests on the symmetry of the increment
+# `gamma * (Z[a] - Z[b]) + epsilon`: a frozen snapshot is a fixed external
+# proposal source, so the acceptance ratio is the density ratio alone.
+.de_orchestrate <- function(rust_call, np, n_chains, init_mat,
+                            proposal_sd_mat, gamma, de_noise, n_iter,
+                            warmup, de_every, adapt, seed) {
+  if (de_every < 1L) {
+    stop("`de_every` must be a positive integer.", call. = FALSE)
+  }
+  total_iters <- n_iter
+  de_every <- as.integer(de_every)
+  warmup <- as.integer(warmup)
+  n_batches <- max(1L, total_iters %/% de_every)
+  batch_sizes <- rep(de_every, n_batches)
+  remainder <- total_iters - n_batches * de_every
+  if (remainder > 0L) {
+    batch_sizes[n_batches] <- batch_sizes[n_batches] + remainder
+  }
+  warmup_batches <- max(0L, min(n_batches, warmup %/% de_every))
+  warmup_used <- if (warmup_batches > 0L) {
+    sum(batch_sizes[seq_len(warmup_batches)])
+  } else {
+    0L
+  }
+
+  states <- lapply(seq_len(n_chains), function(c) {
+    .am_init_state(np, sigma_init = proposal_sd_mat[c, ]^2)
+  })
+  current_init <- init_mat
+  current_sd <- proposal_sd_mat
+
+  sampling_iters <- total_iters - warmup_used
+  if (sampling_iters < 1L) sampling_iters <- 1L
+  draws_kept <- array(NA_real_, dim = c(sampling_iters, n_chains, np))
+  accept_acc <- numeric(n_chains)
+  iters_acc <- 0L
+  kept_filled <- 0L
+  accept_history <- matrix(NA_real_, nrow = n_chains, ncol = n_batches)
+  # Spread of the population across chains, per dimension, recorded each batch.
+  # A column collapsing toward zero signals ensemble degeneracy.
+  disp_history <- matrix(NA_real_, nrow = np, ncol = n_batches)
+
+  for (b in seq_len(n_batches)) {
+    bsize <- batch_sizes[b]
+    res <- rust_call(init_flat = as.numeric(t(current_init)),
+                     sd_flat = as.numeric(t(current_sd)),
+                     n_iter = bsize,
+                     seed = seed + b - 1L,
+                     proposal_mode = 1L, gamma = gamma, de_noise = de_noise)
+    draws_batch <- array(res$draws,
+                         dim = c(res$n_iter, res$n_chains, res$n_params))
+    accept_history[, b] <- res$accept_rate
+
+    in_warmup <- b <= warmup_batches
+    if (!in_warmup) {
+      start <- kept_filled + 1L
+      end <- kept_filled + bsize
+      draws_kept[start:end, , ] <- draws_batch
+      accept_acc <- accept_acc + bsize * res$accept_rate
+      iters_acc <- iters_acc + bsize
+      kept_filled <- end
+    }
+
+    if (in_warmup && isTRUE(adapt)) {
+      for (c in seq_len(n_chains)) {
+        chain_draws <- if (np == 1L) {
+          matrix(draws_batch[, c, ], ncol = 1L)
+        } else {
+          draws_batch[, c, ]
+        }
+        states[[c]] <- .am_welford_update_batch(states[[c]], chain_draws)
+        cov_c <- .am_covariance(states[[c]])
+        current_sd[c, ] <- sqrt(pmax(diag(cov_c), 1e-12))
+      }
+    }
+
+    for (c in seq_len(n_chains)) {
+      current_init[c, ] <- as.numeric(draws_batch[res$n_iter, c, ])
+    }
+    disp_history[, b] <- apply(current_init, 2L, stats::sd)
+  }
+
+  sampling_accept <- if (iters_acc > 0L) {
+    accept_acc / iters_acc
+  } else {
+    res$accept_rate
+  }
+  list(
+    draws = draws_kept[seq_len(kept_filled), , , drop = FALSE],
+    accept_rate = sampling_accept,
+    final_proposal_sd = current_sd,
+    final_init = current_init,
+    n_batches = n_batches,
+    batch_sizes = batch_sizes,
+    warmup_batches = warmup_batches,
+    warmup_used = warmup_used,
+    accept_history = accept_history,
+    disp_history = disp_history,
+    seed_next = seed + n_batches
+  )
+}
+
 # Reproducible uniform draws for the parallel-tempering swap step. The
 # draws are derived from `seed` and the batch index, so the same `seed`
 # replays exactly. The caller's global RNG state is saved and restored,
