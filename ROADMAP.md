@@ -118,7 +118,7 @@ discrete deliverable, validated before the next opens.
   per-chain proposal_sd in the kernel, `backend = "auto"` as default and
   `gpum_diagnose()` as the one-call diagnostic.
 - 0.3.0 (delivered 2026-06-15): Parallel Tempering for multimodal targets.
-- 0.4.0 (target 2026-06-29): Differential Evolution MCMC for correlated
+- 0.4.0 (delivered 2026-06-29): Differential Evolution MCMC for correlated
   targets without manual covariance, host-orchestrated with a per-batch
   population snapshot. Ships `gpum_crlb()`, an optional Cramer-Rao reference
   that compares the posterior spread to the inverse observed Fisher
@@ -130,9 +130,11 @@ discrete deliverable, validated before the next opens.
   predictive check and Bayesian p-value are deferred to a later release, since
   they need replicated-data generation from an arbitrary likelihood, which the
   synthesis path of 0.8.0 introduces.
-- 0.4.1: a plotting layer for the joint posterior (pairs, credible regions,
-  level-curve and 3D surface) and explanatory figures for the Bayesian
-  decisions (hypothesis probability, ROPE, Cramer-Rao, Bayes factor).
+- 0.4.1 (delivered 2026-06-29): a plotting layer for the joint posterior
+  (pairs, credible regions, level-curve and 3D surface), explanatory figures
+  for the Bayesian decisions, the observed-against-generated check
+  (`gpum_ppc`, `gpum_density_compare`), and three real-data case-study
+  vignettes with a live head-to-head against the established packages.
 - 0.4.2: the per-generation in-kernel Differential Evolution path under
   `de_sync = TRUE`, for the canonical per-iteration mixing on curved or
   strongly correlated targets.
@@ -140,10 +142,80 @@ discrete deliverable, validated before the next opens.
 - 0.6.0: per-column marginal auto-selection.
 - 0.7.0: vine copula for `d > 2`.
 - 0.8.0: synthesis, `generate(fit, n)`.
+- 0.9.0: extreme optimisation for honest competitive performance. The live
+  head-to-heads of the 0.4.1 case studies show the package competitive but not
+  ahead on small single-chain problems, where a tuned conjugate or gradient
+  sampler leads. This milestone closes that gap by engineering: fused
+  likelihood kernels, mixed precision, single-chain proposal efficiency and
+  whatever the profiles demand, until the package wins the live head-to-heads
+  fairly, proven on the registered benchmark rather than asserted. The didactic
+  book below is gated on this milestone, so its claim that the package is the
+  right tool is earned experimentally.
 - 1.0.0: documentation and API polish as the reference release.
 
 Tier 2 (fused kernels for common likelihoods) and Tier 5 (vector and matrix
 DSL) become optional, scheduled only when a real user case pulls them.
+
+## The didactic book on Bayesian inference
+
+The headline deliverable of the arc is a didactic book on Bayesian inference,
+written to an academic standard for use as a university reference, in which
+`gpumetropolis` is the working tool throughout. Provisional title, in English:
+**From A Priori to A Posteriori**, with the subtitle *a rigorous, hands-on
+course in Bayesian inference, with the classical view alongside*. The Latin
+terms name the arc: from reasoning before the data, derived by hand, to the
+posterior, computed. The book teaches the inference,
+declaring the model, sampling, diagnosing convergence, deciding hypotheses,
+comparing models, checking the fit against the data, and uses the package at
+every step as the tool that fits the task. It is not a manual for the package;
+it is a course in the method, with the package as its instrument.
+
+Three differentiators set its character. First, mathematical rigor is kept
+throughout: results are derived and proved, not asserted, to the standard of a
+graduate text. Second, a frank, constructive comparison with classical
+inference runs alongside the Bayesian development, taking Casella and Berger as
+the reference for the classical side, so the reader sees the two paradigms
+answer the same question and meet or part on stated terms, step by step rather
+than by decree. Third, the pedagogy is hands-first: the reader learns the
+mathematics and works each case by hand on paper, derives the maximum
+likelihood estimator and the Fisher information, then reproduces the numbers
+with the classical tools and with the Bayesian sampler and compares them. The
+seed is already in the case studies, where the Cramer-Rao bound from
+`gpum_crlb` is shown matching the standard errors of `lm` and `evd::fgev`, and
+the posterior mean tracking the maximum likelihood estimate; the book makes
+that meeting of paradigms the spine of the teaching.
+
+The comparison extends to machine learning as unifying mathematics, not as a
+demonstration of the package on deep models. The book draws the exact bridges
+that a reader from machine learning already half-knows: the prior is a
+regulariser, so the posterior mode under a Gaussian prior is the L2-penalised
+maximum likelihood and under a Laplace prior the L1; a loss is a negative
+log-likelihood, so cross-entropy and squared error are the categorical and
+Gaussian likelihoods; and WAIC and LOO are the principled counterpart of
+cross-validation and the control of overfitting. It stops at the boundary
+rather than crossing it: full Bayesian neural networks, variational
+autoencoders and normalising flows are high-dimensional differentiable targets,
+the territory of gradient samplers and automatic differentiation, which is not
+this package's arc (decision 6 of `BRIEFING.md`). Where the inference needs
+that regime, the book names the right tool, gradient methods through Stan or
+the JAX-backed libraries, and says plainly why a generic sampler does not go
+there. Three paradigms, classical, Bayesian and machine learning, answer the
+same question and meet or part on stated terms.
+
+Two conditions govern it. First, sequencing: the book comes only after the
+0.9.0 extreme-optimisation milestone, so that its claim that `gpumetropolis` is
+the right tool is earned in fair, honest, experimental head-to-heads against
+the established packages, not asserted. A textbook that recommends a tool must
+show that tool winning on the merits. Second, direction: the book guides the
+package, not the other way round. Each chapter that the teaching needs surfaces
+a feature the package must deliver well, and those needs set the priority of
+the improvements before it. The living-book vignette chapters already written
+are the seed; the inference and comparison theory developed alongside them, and
+the registered benchmark, are the rest.
+
+Form: a bookdown volume in the style of an R package book, alongside a pkgdown
+reference site for the function documentation, published on the web and
+deposited for a DOI.
 
 ## Post-1.0.0 trajectory
 
