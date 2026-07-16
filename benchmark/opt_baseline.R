@@ -31,7 +31,7 @@ m_wt <- gpum_model(~ -0.5 * ((mpg - a - b * wt) / exp(ls))^2 - ls,
 dat1 <- list(mpg = yv, wt = xw)
 for (meth in c("de", "rwm")) {
   t <- system.time(f <- gpu_metropolis(m_wt, data = dat1, n_iter = N,
-        n_chains = 8, method = meth, seed = 1, backend = "cpu"))["elapsed"]
+        n_chains = 8, method = meth, warmup = if (meth == "rwm") "auto" else NULL, seed = 1, backend = "cpu"))["elapsed"]
   add("mtcars", paste0("gpum_", meth), ess_ps(as.vector(f$draws[, , "b"]), t),
       unname(t), mean(f$draws[, , "b"]))
 }
@@ -64,7 +64,7 @@ reg <- gpum_model(~ -0.5 * ((waiting - a - b * eruptions) / exp(ls))^2 - ls,
 dat2 <- list(waiting = d$waiting, eruptions = d$eruptions)
 for (meth in c("de", "rwm")) {
   t <- system.time(f <- gpu_metropolis(reg, data = dat2, n_iter = N,
-        n_chains = 8, method = meth, seed = 1, backend = "cpu"))["elapsed"]
+        n_chains = 8, method = meth, warmup = if (meth == "rwm") "auto" else NULL, seed = 1, backend = "cpu"))["elapsed"]
   add("faithful", paste0("gpum_", meth), ess_ps(as.vector(f$draws[, , "b"]), t),
       unname(t), mean(f$draws[, , "b"]))
 }
@@ -101,6 +101,7 @@ if (requireNamespace("evd", quietly = TRUE)) {
   for (meth in c("de", "rwm")) {
     t <- system.time(f <- gpu_metropolis(gum, data = dat3, n_iter = N,
           n_chains = 8, proposal_sd = c(0.04, 0.1), method = meth,
+          warmup = if (meth == "rwm") "auto" else NULL,
           seed = 1, backend = "cpu"))["elapsed"]
     add("portpirie", paste0("gpum_", meth),
         ess_ps(as.vector(f$draws[, , "mu"]), t), unname(t),

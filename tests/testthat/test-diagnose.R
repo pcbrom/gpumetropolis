@@ -69,7 +69,7 @@ test_that("gpum_diagnose emits an adaptation_hint when the warmup is too short",
                         seed = 1, backend = "cpu")
   out <- gpum_diagnose(fit, plot = FALSE, return_data = TRUE)
   expect_false(is.null(out$adaptation_hint))
-  expect_match(out$adaptation_hint, "still climbing")
+  expect_match(out$adaptation_hint, "not plateaued")
   expect_match(out$adaptation_hint, sprintf("warmup = %d", 2L * fit$warmup))
 })
 

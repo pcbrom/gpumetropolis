@@ -39,7 +39,7 @@ test_that(".am_covariance returns the seed Sigma before two samples land", {
 
 test_that(".am_robbins_monro_scale grows the scale when accept exceeds the target", {
   for (d in c(1L, 2L, 5L)) {
-    target <- if (d == 1L) 0.44 else 0.234
+    target <- .am_target_accept(d)
     grown <- .am_robbins_monro_scale(1.0, accept_rate = target + 0.1,
                                      batch_idx = 1L, d = d)
     shrunk <- .am_robbins_monro_scale(1.0, accept_rate = target - 0.1,

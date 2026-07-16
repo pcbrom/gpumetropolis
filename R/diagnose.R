@@ -98,19 +98,21 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE,
   }
 
   # Adaptation hint, only when the fit carries adaptation book-keeping
-  # and the last-batch acceptance per chain is still below 80% of the
-  # asymptotic target. Robbins-Monro converges slowly by design (gamma_t
-  # = t^{-2/3}), so a short warmup leaves the chain still climbing at
-  # the warmup boundary. Doubling the warmup is the canonical knob.
+  # and the last-batch acceptance sits outside [0.8, 1.25] times the
+  # dimension-dependent target. Robbins-Monro converges slowly by design
+  # (gamma_t = t^{-2/3}), so a short warmup leaves the acceptance still
+  # moving at the warmup boundary, from below (steps too wide) or from
+  # above (steps too narrow). Doubling the warmup is the canonical knob.
   adaptation_hint <- NULL
   if (!is.null(fit$adaptation) && !is_de) {
     ah <- fit$adaptation$accept_history
     if (is.matrix(ah) && ncol(ah) >= 1L) {
-      target <- if (np == 1L) 0.44 else 0.234
+      target <- .am_target_accept(np)
       last_mean <- mean(ah[, ncol(ah)], na.rm = TRUE)
-      if (is.finite(last_mean) && last_mean < 0.8 * target) {
+      if (is.finite(last_mean) &&
+          (last_mean < 0.8 * target || last_mean > 1.25 * target)) {
         adaptation_hint <- sprintf(
-          paste0("Adaptation still climbing at end of warmup ",
+          paste0("Adaptation had not plateaued at end of warmup ",
                  "(last-batch accept %.2f, target %.2f). ",
                  "Consider warmup = %d to let the per-chain scale ",
                  "plateau."),

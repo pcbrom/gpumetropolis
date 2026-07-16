@@ -109,7 +109,11 @@ print.gpum_model <- function(x, ...) {
 #'   convention of Stan and nimble. Must lie in `[0, n_iter)`. Default
 #'   `floor(n_iter / 2)`, so `fit$draws` is post-warmup and is suitable for
 #'   direct plotting. Set `warmup = 0` to keep every iteration, useful for
-#'   inspecting the burn-in trajectory in a trace plot.
+#'   inspecting the burn-in trajectory in a trace plot. The string `"auto"`
+#'   (adaptive `"rwm"` path) treats `floor(n_iter / 2)` as a budget and stops
+#'   the warmup early once the per-chain acceptance has sat at the asymptotic
+#'   target for two consecutive batches, spending the remaining iterations on
+#'   sampling instead of discarding them.
 #' @param adapt Whether to adapt the per-chain proposal scale during
 #'   warmup. When `TRUE` (default) and `warmup > 0`, the warmup runs in
 #'   batches; between batches, Welford updates the per-chain running
@@ -244,7 +248,8 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
     n_chains <- nrow(init_mat)
   }
   n_iter <- as.integer(n_iter)
-  if (is.null(warmup)) {
+  warmup_auto <- identical(warmup, "auto")
+  if (is.null(warmup) || warmup_auto) {
     warmup <- n_iter %/% 2L
   }
   warmup <- as.integer(warmup)
@@ -301,7 +306,8 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
 
   rust_call <- function(init_flat, sd_flat, n_iter, seed,
                         temperatures_flat = rep(1.0, n_chains),
-                        proposal_mode = 0L, gamma = 0, de_noise = 0) {
+                        proposal_mode = 0L, gamma = 0, de_noise = 0,
+                        proposal_l = numeric(0)) {
     rust_gpu_metropolis(
       model$loglik$code, model$loglik$consts, np,
       as.numeric(data_flat), model$n_cols, n_obs,
@@ -309,7 +315,8 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
       init_flat, sd_flat,
       as.numeric(temperatures_flat),
       as.integer(n_iter), as.numeric(seed), backend,
-      as.integer(proposal_mode), as.numeric(gamma), as.numeric(de_noise)
+      as.integer(proposal_mode), as.numeric(gamma), as.numeric(de_noise),
+      as.numeric(proposal_l)
     )
   }
 
@@ -451,15 +458,22 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
     am <- .am_orchestrate_warmup(
       rust_call = rust_call, np = np, n_chains = n_chains,
       init_mat = init_mat, proposal_sd = proposal_sd_mat,
-      warmup = warmup, seed = as.numeric(seed)
+      warmup = warmup, seed = as.numeric(seed),
+      auto_stop = warmup_auto
     )
     sampling_iters <- n_iter - am$warmup_used
     if (sampling_iters < 1L) sampling_iters <- 1L
+    # The sampling phase carries the full-covariance proposal the warmup
+    # estimated: `state + L z` with the per-chain Cholesky factor frozen at
+    # the warmup boundary, so the phase is stationary.
+    use_L <- np > 1L && !is.null(am$final_L)
     res <- rust_call(
       init_flat = as.numeric(t(am$final_init)),
       sd_flat = as.numeric(t(am$final_proposal_sd)),
       n_iter = sampling_iters,
-      seed = am$seed_next
+      seed = am$seed_next,
+      proposal_mode = if (use_L) 2L else 0L,
+      proposal_l = if (use_L) am$final_L else numeric(0)
     )
     draws <- array(
       res$draws,

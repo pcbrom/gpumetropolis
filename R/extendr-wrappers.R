@@ -30,7 +30,7 @@ rust_available_backends <- function() .Call(wrap__rust_available_backends)
 #' compiled bytecode; `draws` is returned flat in the column-major order of an
 #' R array of dimension (n_iter, n_chains, n_params).
 #' @noRd
-rust_gpu_metropolis <- function(loglik_code, loglik_consts, n_params, data, n_cols, n_obs, prior_code, prior_consts, init, proposal_sd, temperatures, n_iter, seed, backend, proposal_mode, gamma, de_noise) .Call(wrap__rust_gpu_metropolis, loglik_code, loglik_consts, n_params, data, n_cols, n_obs, prior_code, prior_consts, init, proposal_sd, temperatures, n_iter, seed, backend, proposal_mode, gamma, de_noise)
+rust_gpu_metropolis <- function(loglik_code, loglik_consts, n_params, data, n_cols, n_obs, prior_code, prior_consts, init, proposal_sd, temperatures, n_iter, seed, backend, proposal_mode, gamma, de_noise, proposal_l) .Call(wrap__rust_gpu_metropolis, loglik_code, loglik_consts, n_params, data, n_cols, n_obs, prior_code, prior_consts, init, proposal_sd, temperatures, n_iter, seed, backend, proposal_mode, gamma, de_noise, proposal_l)
 
 #' Evaluate the compiled log-likelihood at a batch of parameter points.
 #'

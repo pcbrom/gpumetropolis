@@ -85,6 +85,7 @@ fn rust_gpu_metropolis(
     proposal_mode: i32,
     gamma: f64,
     de_noise: f64,
+    proposal_l: Vec<f64>,
 ) -> List {
     let ll_code: Vec<u32> = loglik_code.iter().map(|&v| v as u32).collect();
     let pr_code: Vec<u32> = prior_code.iter().map(|&v| v as u32).collect();
@@ -107,6 +108,7 @@ fn rust_gpu_metropolis(
         proposal_mode as u32,
         gamma,
         de_noise,
+        &proposal_l,
     );
     let draws: Vec<f64> = res.draws.iter().map(|&v| v as f64).collect();
     let accept_rate: Vec<f64> = res.accept_rate.iter().map(|&v| v as f64).collect();

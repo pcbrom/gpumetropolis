@@ -50,7 +50,11 @@ Default 4.}
 convention of Stan and nimble. Must lie in \verb{[0, n_iter)}. Default
 \code{floor(n_iter / 2)}, so \code{fit$draws} is post-warmup and is suitable for
 direct plotting. Set \code{warmup = 0} to keep every iteration, useful for
-inspecting the burn-in trajectory in a trace plot.}
+inspecting the burn-in trajectory in a trace plot. The string \code{"auto"}
+(adaptive \code{"rwm"} path) treats \code{floor(n_iter / 2)} as a budget and stops
+the warmup early once the per-chain acceptance has sat at the asymptotic
+target for two consecutive batches, spending the remaining iterations on
+sampling instead of discarding them.}
 
 \item{adapt}{Whether to adapt the per-chain proposal scale during
 warmup. When \code{TRUE} (default) and \code{warmup > 0}, the warmup runs in

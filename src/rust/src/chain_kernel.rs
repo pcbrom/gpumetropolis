@@ -111,6 +111,7 @@ fn metropolis_block_kernel(
     proposal_sd: &Array<f32>,
     temperatures: &Array<f32>,
     de_params: &Array<f32>,   // [gamma, de_noise]
+    proposal_l: &Array<f32>,  // per-chain lower-triangular L, n_chains * np * np
     meta: &Array<u32>,        // [n_instr, n_params, n_cols, n_obs, n_iter, prior_n, seed, proposal_mode]
     out_draws: &mut Array<f32>,
     out_accept: &mut Array<f32>,
@@ -189,7 +190,7 @@ fn metropolis_block_kernel(
             // Thread 0 proposes; the block sees the proposal after the barrier.
             if tid == 0 {
                 if proposal_mode == 0u32 {
-                    // Gaussian random walk.
+                    // Gaussian random walk, diagonal scale.
                     let mut k = 0usize;
                     while k < n_params {
                         ctr += 1u32;
@@ -199,6 +200,32 @@ fn metropolis_block_kernel(
                         let z = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
                         prop[k] = state[k] + proposal_sd[pbase + k] * z;
                         k += 1;
+                    }
+                } else if proposal_mode == 2u32 {
+                    // Gaussian random walk with a per-chain lower-triangular
+                    // Cholesky factor: prop = state + L z, the full-covariance
+                    // proposal the adaptive warmup estimated.
+                    let mut zbuf = Array::<f32>::new(MAX_PARAMS);
+                    let mut k = 0usize;
+                    while k < n_params {
+                        ctr += 1u32;
+                        let u1 = rand_uniform(seedmix, ctr);
+                        ctr += 1u32;
+                        let u2 = rand_uniform(seedmix, ctr);
+                        zbuf[k] = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
+                        k += 1;
+                    }
+                    let lbase = chain * n_params * n_params;
+                    let mut r = 0usize;
+                    while r < n_params {
+                        let mut acc = state[r];
+                        let mut j = 0usize;
+                        while j <= r {
+                            acc += proposal_l[lbase + r * n_params + j] * zbuf[j];
+                            j += 1;
+                        }
+                        prop[r] = acc;
+                        r += 1;
                     }
                 } else {
                     // Differential Evolution: the proposal increment is the
@@ -338,6 +365,7 @@ fn run_block<R: Runtime>(
     seed: u32,
     proposal_mode: u32,
     de_params: &[f32],
+    proposal_l: &[f32],
 ) -> ChainResult {
     let n_chains = init.len() / n_params;
     let client = R::client(&Default::default());
@@ -351,6 +379,7 @@ fn run_block<R: Runtime>(
     let psd_h = client.create_from_slice(f32::as_bytes(proposal_sd));
     let temp_h = client.create_from_slice(f32::as_bytes(temperatures));
     let de_h = client.create_from_slice(f32::as_bytes(de_params));
+    let l_h = client.create_from_slice(f32::as_bytes(if proposal_l.is_empty() { &[0.0f32] } else { proposal_l }));
     let meta: [u32; 8] = [
         (code.len() / 2) as u32,
         n_params as u32,
@@ -386,6 +415,7 @@ fn run_block<R: Runtime>(
             ArrayArg::from_raw_parts(psd_h, proposal_sd.len()),
             ArrayArg::from_raw_parts(temp_h, temperatures.len()),
             ArrayArg::from_raw_parts(de_h, de_params.len().max(1)),
+            ArrayArg::from_raw_parts(l_h, proposal_l.len().max(1)),
             ArrayArg::from_raw_parts(meta_h, meta.len()),
             ArrayArg::from_raw_parts(draws_h.clone(), n_iter * n_chains * n_params),
             ArrayArg::from_raw_parts(accept_h.clone(), n_chains),
@@ -434,6 +464,7 @@ pub fn gpu_metropolis_chain(
     proposal_mode: u32,
     gamma: f64,
     de_noise: f64,
+    proposal_l: &[f64],
 ) -> ChainResult {
     // The CPU backend uses a native Rust implementation in f64; the CubeCL CPU
     // runtime is slow for this interpreter-style kernel.
@@ -441,7 +472,7 @@ pub fn gpu_metropolis_chain(
         return crate::cpu_native::run(
             code, consts, prior_code, prior_consts, n_params, data, n_cols,
             n_obs, init, proposal_sd, temperatures, n_iter, seed,
-            proposal_mode, gamma, de_noise,
+            proposal_mode, gamma, de_noise, proposal_l,
         );
     }
     // GPU backends are compiled in only when the matching Cargo feature is on.
@@ -455,19 +486,20 @@ pub fn gpu_metropolis_chain(
             f32v(proposal_sd), f32v(temperatures),
         );
         let de_params: [f32; 2] = [gamma as f32, de_noise as f32];
+        let lp: Vec<f32> = proposal_l.iter().map(|&v| v as f32).collect();
         match backend {
             #[cfg(feature = "cuda")]
             crate::gpu::Backend::Cuda => {
                 return run_block::<cubecl::cuda::CudaRuntime>(
                     code, &c, prior_code, &pc, n_params, &d, n_cols, n_obs,
-                    &i, &p, &tmp, n_iter, seed, proposal_mode, &de_params,
+                    &i, &p, &tmp, n_iter, seed, proposal_mode, &de_params, &lp,
                 );
             }
             #[cfg(feature = "vulkan")]
             crate::gpu::Backend::Vulkan => {
                 return run_block::<cubecl::wgpu::WgpuRuntime>(
                     code, &c, prior_code, &pc, n_params, &d, n_cols, n_obs,
-                    &i, &p, &tmp, n_iter, seed, proposal_mode, &de_params,
+                    &i, &p, &tmp, n_iter, seed, proposal_mode, &de_params, &lp,
                 );
             }
             _ => {}

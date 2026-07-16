@@ -262,6 +262,7 @@ pub fn run(
     proposal_mode: u32,
     gamma: f64,
     de_noise: f64,
+    proposal_l: &[f64],
 ) -> ChainResult {
     let n_chains = init.len() / n_params;
     let two_pi = 6.283185307179586f64;
@@ -297,9 +298,11 @@ pub fn run(
             let mut accepts = 0u32;
             let mut cdraws = vec![0.0f32; n_iter * n_params];
 
+            let lbase = c * n_params * n_params;
+            let mut zbuf = vec![0.0f64; n_params];
             for t in 0..n_iter {
                 if proposal_mode == 0 {
-                    // Gaussian random walk.
+                    // Gaussian random walk, diagonal scale.
                     for j in 0..n_params {
                         ctr += 1;
                         let u1 = rand_uniform(seedmix, ctr);
@@ -307,6 +310,24 @@ pub fn run(
                         let u2 = rand_uniform(seedmix, ctr);
                         let z = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
                         prop[j] = state[j] + proposal_sd[pbase + j] * z;
+                    }
+                } else if proposal_mode == 2 {
+                    // Gaussian random walk with a per-chain lower-triangular
+                    // Cholesky factor: prop = state + L z, so the proposal
+                    // carries the full covariance the warmup estimated.
+                    for j in 0..n_params {
+                        ctr += 1;
+                        let u1 = rand_uniform(seedmix, ctr);
+                        ctr += 1;
+                        let u2 = rand_uniform(seedmix, ctr);
+                        zbuf[j] = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
+                    }
+                    for k in 0..n_params {
+                        let mut acc = state[k];
+                        for j in 0..=k {
+                            acc += proposal_l[lbase + k * n_params + j] * zbuf[j];
+                        }
+                        prop[k] = acc;
                     }
                 } else {
                     // Differential Evolution: the proposal increment is the

@@ -218,11 +218,15 @@ The package is released through R-universe; see Installation above.
 The direction beyond the current release is recorded, tiered, in
 [`ROADMAP.md`](https://github.com/pcbrom/gpumetropolis/blob/main/ROADMAP.md).
 The in-scope Metropolis-Hastings family is now complete through Differential
-Evolution MCMC (v0.4.0) and the plotting layer of v0.4.1; a per-generation
-in-kernel DE variant is reserved as v0.4.2 under `de_sync = TRUE`. Next comes
-an extreme-optimisation milestone (v0.5.0), pulled ahead of the application
-arc, aimed at winning the live head-to-heads of the case-study vignettes
-fairly. The application trajectory then follows with the bivariate copula
+Evolution MCMC (v0.4.0), the plotting layer of v0.4.1 and the per-generation
+DE variant of v0.4.2 under `de_sync = TRUE`. The extreme-optimisation
+milestone (v0.5.0) is delivered: the adaptive warmup gained full-covariance
+proposals from a cross-chain pooled covariance, dimension-dependent
+acceptance targets and a mid-warmup restart, and the `rwm` path now wins the
+live head-to-heads of the case-study vignettes against Stan and the generic
+samplers, median of three runs on the versioned harness (amendment v1.1 of
+`EXPERIMENT_PROTOCOL.md`). The application trajectory follows with the
+bivariate copula
 workflow (v0.6.0), per-column marginal auto-selection (v0.7.0), vine copula
 for higher dimension (v0.8.0) and synthesis
 (v0.9.0). The distribution catalogue that drives the marginal auto-selection

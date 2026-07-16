@@ -1,3 +1,38 @@
+# gpumetropolis 0.5.0
+
+- The adaptive warmup of `method = "rwm"` now tunes a full-covariance
+  proposal: from the second warmup batch on, the walk is `state + L z` with
+  `L = scale * chol(Sigma_hat)`, so the proposal carries the correlations of
+  the target instead of its diagonal alone. Both backends consume the
+  Cholesky factor; dimension one keeps the scalar path.
+- `Sigma_hat` pools the Welford covariance accumulators across chains: every
+  chain targets the same posterior, and one well-fed estimate beats many
+  noisy ones. The Robbins-Monro scalar stays per chain.
+- The acceptance target is dimension-dependent (0.44 in dimension one, 0.35
+  in dimension two, down to 0.234 from dimension nine on), following the
+  numerical optima of Gelman, Roberts and Gilks (1996) instead of applying
+  the asymptotic value in every dimension.
+- At mid-warmup the covariance accumulators restart empty and the scale
+  restarts at `2.38 / sqrt(d)` with the Robbins-Monro gain back at full
+  strength. Draws from the initial transient no longer contaminate the
+  covariance the sampling phase inherits, and the scalar tuned against that
+  transient is discarded rather than corrected at a decayed gain.
+- `warmup = "auto"` ends the warmup early once the acceptance sits inside
+  the target band and the per-chain scales have stopped drifting for two
+  consecutive batches after the mid-warmup restart; the saved budget goes to
+  the sampling phase.
+- `gpum_diagnose()` flags a warmup that had not plateaued from either side:
+  last-batch acceptance below 0.8 times or above 1.25 times the
+  dimension-dependent target now triggers the adaptation hint.
+- Measured outcome, recorded as amendment v1.1 of `EXPERIMENT_PROTOCOL.md`
+  with the harness at `benchmark/opt_baseline.R` (median of three runs,
+  30000 draws, identical ESS estimator): the `rwm` path wins every applied
+  case of the case-study vignettes against Stan (portpirie 56491 vs 47808,
+  mtcars 41301 vs 17982, faithful 33362 vs 8978 effective draws per second)
+  and against the generic `mcmc::metrop` everywhere. Conjugate Gibbs
+  specialists remain ahead on conjugate regressions, as stated in the
+  amendment.
+
 # gpumetropolis 0.4.2
 
 - `gpu_metropolis(method = "de", de_sync = TRUE)` adds the synchronous

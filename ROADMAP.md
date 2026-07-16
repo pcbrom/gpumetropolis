@@ -139,15 +139,20 @@ discrete deliverable, validated before the next opens.
   Evolution path under
   `de_sync = TRUE`, for the canonical per-iteration mixing on curved or
   strongly correlated targets.
-- 0.5.0: extreme optimisation for honest competitive performance, pulled ahead
+- 0.5.0 (delivered 2026-07-16): extreme optimisation for honest competitive
+  performance, pulled ahead
   of the application arc because the didactic book is gated on it. The live
-  head-to-heads of the 0.4.1 case studies show the package competitive but not
+  head-to-heads of the 0.4.1 case studies showed the package competitive but
+  not
   ahead on small single-chain problems, where a tuned conjugate or gradient
-  sampler leads. This milestone closes that gap by engineering: full-covariance
-  adaptive proposals per chain, fused likelihood kernels, mixed precision,
-  single-chain proposal efficiency and whatever the profiles demand, until the
-  package wins the live head-to-heads fairly, proven on the registered
-  benchmark rather than asserted. The didactic book below is gated on this
+  sampler leads. This milestone closed that gap by engineering the adaptive
+  warmup: full-covariance proposals from a cross-chain pooled covariance,
+  dimension-dependent acceptance targets, a mid-warmup restart of the
+  accumulators and the Robbins-Monro schedule, and an early-stopping
+  `warmup = "auto"`. The outcome is recorded as amendment v1.1 of
+  `EXPERIMENT_PROTOCOL.md`: the `rwm` path wins all three applied cases
+  against Stan and the generic samplers, median of three runs on the
+  versioned harness. The didactic book below is gated on this
   milestone, so its claim that the package is the right tool is earned
   experimentally.
 - 0.6.0: bivariate copula workflow with the four common families.

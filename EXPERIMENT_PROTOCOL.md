@@ -1,13 +1,13 @@
 # Experiment protocol: characterising the advantage regime of gpumetropolis
 
-Version 0.6. Status: FROZEN. Pre-registered and approved by the author before
+Version 1.1. Status: FROZEN. Pre-registered and approved by the author before
 any cell of the registered experiment is executed. Freeze date of v0.1:
-2026-05-16. Amendments v0.2 to v0.6: 2026-05-16. See section 14 for the
+2026-05-16. Amendments v0.2 to v0.6: 2026-05-16; v0.7: 2026-05-18; v0.9:
+2026-06-15; v1.0: 2026-06-29; v1.1: 2026-07-16. See section 14 for the
 amendment record.
 
-The protocol is versioned on the 0.x line because it is a living
-pre-registration that is still being refined ahead of the registered run; a
-1.x label would imply a final document.
+The sections up to 13 are the frozen pre-registration; amendments extend the
+record in section 14 without rewriting them.
 
 Pre-registration in the strict sense: this document fixes the hypotheses,
 design, metrics and decision rules before any result exists. The dated commit
@@ -585,3 +585,80 @@ What this amendment does not change. The registered factorial of section
 4 is not re-run. The v0.7 and v0.9 vereditos stand. The v0.4.0 release
 notes describe the Differential Evolution path; this amendment records
 the protocol of the two reproducible worked cases.
+
+### v1.1, 2026-07-16: the 0.5.0 optimisation gate, head-to-head measurement
+
+Status of this amendment. Recorded with the v0.5.0 release. It states
+the protocol and the verdict of the optimisation milestone that the
+roadmap set as the gate for the competitive claims of the package: the
+random-walk path must win its head-to-heads honestly, on a versioned
+harness, before any such claim is made. The baseline was measured and
+committed before the optimisation levers were merged, so the comparison
+is against a frozen reference, not a moving one.
+
+The harness. `benchmark/opt_baseline.R` runs the three applied cases of
+the case-study vignettes in the single-chain-regime configuration that
+favours the competitors: `mtcars` (Gaussian regression, `mpg ~ wt`),
+`faithful` (Gaussian regression, `waiting ~ eruptions`, n = 272) and
+`portpirie` (Gumbel annual maxima, the non-conjugate case). Every
+sampler draws 30000 iterations; `gpumetropolis` runs 8 chains on the
+CPU backend and is measured on total effective draws over total wall
+clock, the same `coda::effectiveSize` estimator for all adapters. The
+adapters are `mcmc::metrop` (generic random-walk), `MCMCpack` (conjugate
+Gibbs specialist, applicable to the two regressions only), Stan through
+`cmdstanr` (NUTS, sampling wall clock, compile excluded) and the two
+`gpumetropolis` paths (`rwm` with `warmup = "auto"`, and `de`). Wall
+clocks below the timer resolution are floored at 0.02 s in the
+denominator, which biases against `gpumetropolis` never in its favour.
+Each configuration runs three times end to end and the reported figure
+is the median of the three, because single-run wall clocks on a shared
+workstation vary by a factor of two to three; the per-run CSVs are
+versioned next to the medians.
+
+The optimisation levers, all in the adaptive warmup of the `rwm` path.
+First, the proposal is the full-covariance random walk `state + L z`
+with `L = scale * chol(Sigma_hat)`, computed once per warmup batch and
+consumed by both backends; the diagonal proposal remains for dimension
+one. Second, `Sigma_hat` pools the Welford accumulators across chains,
+since every chain targets the same posterior and one well-fed estimate
+beats many noisy ones; the Robbins-Monro scalar stays per chain.
+Third, the acceptance target is dimension-dependent, 0.44 in dimension
+one through 0.25 in dimension eight and 0.234 beyond, following the
+numerical optima of Gelman, Roberts and Gilks (1996) instead of the
+asymptotic value everywhere. Fourth, at mid-warmup every covariance
+accumulator restarts empty and the scale restarts at 2.38 / sqrt(d)
+with the Robbins-Monro gain schedule back at full strength, so the
+covariance the sampling phase inherits is estimated from equilibrium
+draws only and the scalar tuned against the transient is discarded.
+Fifth, `warmup = "auto"` may stop the warmup early when the acceptance
+sits inside the target band and the scales have stopped drifting for
+two consecutive batches after the restart, handing the saved budget to
+the sampling phase.
+
+Results, ESS per second, median of three runs. Baseline, at commit
+level v0.4.2 (`benchmark/opt_results_median3.csv`): mtcars 15685
+against Stan 12546; faithful 3726 against Stan 7667; portpirie 11999
+against Stan 30485. After the levers
+(`benchmark/opt_results_v3median.csv`, runs v3r1 to v3r3): mtcars 41301
+against Stan 17982; faithful 33362 against Stan 8978; portpirie 56491
+against Stan 47808. The `rwm` path wins every case in every one of the
+three runs, against Stan and against the generic `mcmc::metrop`. On
+portpirie the per-draw efficiency rose from 0.086 to 0.132 effective
+draws per kept draw with the acceptance settled on the 0.35 target for
+dimension two. The pre-stated criterion is met: (a) the generic
+samplers are beaten on all three cases; (b) Stan is beaten on the
+non-conjugate case and on both regressions.
+
+What the verdict does not claim. `MCMCpack::MCMCregress` remains one to
+two orders of magnitude ahead on the two conjugate regressions
+(median 699941 and 1153846), as a Gibbs sampler drawing from closed-form
+conditionals must; the criterion never included beating a conjugate
+specialist on its own ground, and the many-chains regime where
+`gpumetropolis` overtakes it is measured in the registered factorial,
+not here. All figures are from one Linux workstation; they support the
+relative ordering under an identical budget and estimator, not absolute
+throughput claims on other hardware. Stan draws with one chain, the
+idiomatic single-chain configuration, while `gpumetropolis` uses its
+idiomatic 8 chains at the same total draw count; the comparison is
+between each tool used as designed at equal draws, stated here so the
+reader does not mistake it for a per-chain comparison.

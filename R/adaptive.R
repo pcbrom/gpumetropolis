@@ -60,15 +60,25 @@
   if (state$n < 2L) state$sigma else state$M2 / (state$n - 1L)
 }
 
+# Optimal acceptance rate for random-walk Metropolis as a function of the
+# dimension. 0.234 is the d -> infinity limit of Roberts-Gelman-Gilks
+# (1997); in low dimension the optimum is well above it (0.44 in d = 1,
+# about 0.35 in d = 2), and targeting the asymptotic value there leaves
+# efficiency on the table. Values for d <= 8 follow the numerical results
+# of Gelman, Roberts and Gilks (1996).
+.am_target_accept <- function(d) {
+  low_d <- c(0.44, 0.35, 0.32, 0.30, 0.28, 0.27, 0.26, 0.25)
+  if (d >= 1L && d <= 8L) low_d[d] else 0.234
+}
+
 # Robbins-Monro update for the log of the proposal scale. The step size
 # vanishes as `n_batches_seen^{-2/3}`, slow enough to keep mixing and
-# fast enough to converge inside a finite warmup. Targets 0.234 in
-# dimensions >= 2 and 0.44 in dimension 1, the asymptotic optima of
-# Roberts-Gelman-Gilks (1997).
+# fast enough to converge inside a finite warmup. The default target is
+# the dimension-dependent optimum of `.am_target_accept`.
 .am_robbins_monro_scale <- function(scale, accept_rate, batch_idx, d,
                                     target = NULL) {
   if (is.null(target)) {
-    target <- if (d == 1L) 0.44 else 0.234
+    target <- .am_target_accept(d)
   }
   gamma <- (as.numeric(batch_idx))^(-2 / 3)
   exp(log(scale) + gamma * (accept_rate - target))
@@ -89,7 +99,8 @@
 # is `scale_c * sqrt(diag(cov_c))` per dimension; the off-diagonal
 # Cholesky path opens when the kernel consumes an `L` matrix per chain.
 .am_orchestrate_warmup <- function(rust_call, np, n_chains, init_mat,
-                                   proposal_sd, warmup, seed) {
+                                   proposal_sd, warmup, seed,
+                                   auto_stop = FALSE) {
   if (warmup <= 0L) {
     stop(".am_orchestrate_warmup needs warmup > 0.", call. = FALSE)
   }
@@ -110,16 +121,45 @@
   states <- lapply(seq_len(n_chains), function(c) {
     .am_init_state(np, sigma_init = proposal_sd[c, ]^2)
   })
-  scales <- rep(1.0, n_chains)
+  # 2.38 / sqrt(d) is the optimal scaling of the proposal Cholesky under a
+  # Gaussian target (Roberts-Rosenthal 2001); starting there means the
+  # Robbins-Monro scalar only has to correct the non-Gaussian residual.
+  scales <- rep(2.38 / sqrt(np), n_chains)
   current_init <- init_mat
   current_sd <- proposal_sd
   accept_history <- matrix(NA_real_, nrow = n_chains, ncol = n_batches)
 
+  # Full-covariance proposal: from the second batch on, once Welford has a
+  # covariance estimate, the proposal becomes `state + L z` with a per-chain
+  # lower-triangular `L = scale * chol(cov)`, so the walk carries the
+  # correlations of the target instead of the diagonal alone.
+  current_L <- NULL
+  L_pool <- NULL
+  # The covariance is pooled across chains: every chain targets the same
+  # posterior, so one well-fed Welford beats n_chains noisy ones. The
+  # Robbins-Monro scalar stays per chain, so each chain still finds its own
+  # acceptance.
+  pool_state <- .am_init_state(np, sigma_init = proposal_sd[1L, ]^2)
+  target <- .am_target_accept(np)
+  # The first half of the warmup is treated as transient: chains started
+  # away from the mode and mis-scaled proposals leave draws in the Welford
+  # accumulators that inflate the covariance forever. At mid-warmup every
+  # accumulator restarts, so the covariance the sampling phase inherits is
+  # estimated from equilibrium draws only.
+  reset_batch <- n_batches %/% 2L
+  prev_scales <- scales
+  converged_streak <- 0L
+  batches_run <- 0L
+  warmup_consumed <- 0L
+
   for (b in seq_len(n_batches)) {
+    use_L <- np > 1L && !is.null(current_L)
     res <- rust_call(init_flat = as.numeric(t(current_init)),
                      sd_flat = as.numeric(t(current_sd)),
                      n_iter = batch_sizes[b],
-                     seed = seed + b - 1L)
+                     seed = seed + b - 1L,
+                     proposal_mode = if (use_L) 2L else 0L,
+                     proposal_l = if (use_L) current_L else numeric(0))
     draws <- array(res$draws,
                    dim = c(res$n_iter, res$n_chains, res$n_params))
     for (c in seq_len(n_chains)) {
@@ -129,14 +169,69 @@
         draws[, c, ]
       }
       states[[c]] <- .am_welford_update_batch(states[[c]], chain_draws)
+      pool_state <- .am_welford_update_batch(pool_state, chain_draws)
       scales[c] <- .am_robbins_monro_scale(scales[c], res$accept_rate[c],
-                                           batch_idx = b, d = np)
+                                           batch_idx = if (b > reset_batch) {
+                                             b - reset_batch
+                                           } else {
+                                             b
+                                           },
+                                           d = np, target = target)
       current_init[c, ] <- as.numeric(draws[res$n_iter, c, ])
       cov_c <- .am_covariance(states[[c]])
       diag_sd <- sqrt(pmax(diag(cov_c), 1e-12))
       current_sd[c, ] <- scales[c] * diag_sd
       accept_history[c, b] <- res$accept_rate[c]
     }
+    # Mid-warmup restart of the accumulators (see reset_batch above). The
+    # covariance restarts empty so equilibrium draws alone define it; the
+    # proposal keeps the pre-reset Cholesky shape (`L_pool` below only
+    # refreshes once the new accumulator has data), so no batch falls back
+    # to a diagonal proposal. The Robbins-Monro scalar restarts at its
+    # theoretical optimum with the gain schedule (via `b - reset_batch`)
+    # back at full strength: the scalar tuned against the transient
+    # covariance is wrong for the equilibrium one, and the decayed gain
+    # could not climb back in the batches that remain.
+    if (b == reset_batch) {
+      diag_now <- pmax(diag(.am_covariance(pool_state)), 1e-12)
+      pool_state <- .am_init_state(np, sigma_init = diag_now)
+      states <- lapply(seq_len(n_chains), function(c) {
+        .am_init_state(np, sigma_init = diag_now)
+      })
+      scales <- rep(2.38 / sqrt(np), n_chains)
+    }
+    if (np > 1L) {
+      if (pool_state$n >= 2L) {
+        L_pool <- .am_cholesky(.am_covariance(pool_state))
+      }
+      if (!is.null(L_pool)) {
+        Lflat <- numeric(n_chains * np * np)
+        for (c in seq_len(n_chains)) {
+          Lc <- scales[c] * L_pool
+          Lflat[((c - 1L) * np * np + 1L):(c * np * np)] <- as.numeric(t(Lc))
+        }
+        current_L <- Lflat
+      }
+    }
+    batches_run <- b
+    warmup_consumed <- warmup_consumed + batch_sizes[b]
+
+    # Early freeze: the acceptance must sit near the asymptotic target AND
+    # the Robbins-Monro scales must have stopped moving, both for two
+    # consecutive batches, before the remaining warmup budget is handed to
+    # the sampling phase. Acceptance alone freezes too early: the scale can
+    # pass through the right acceptance while still drifting, and a frozen
+    # half-tuned proposal costs more effective draws than the warmup saves.
+    if (isTRUE(auto_stop) && b >= max(10L, reset_batch + 5L)) {
+      scale_drift <- max(abs(scales / prev_scales - 1))
+      if (mean(abs(res$accept_rate - target)) < 0.05 && scale_drift < 0.03) {
+        converged_streak <- converged_streak + 1L
+      } else {
+        converged_streak <- 0L
+      }
+      if (converged_streak >= 2L) break
+    }
+    prev_scales <- scales
   }
 
   list(
@@ -144,11 +239,12 @@
     final_init = current_init,
     final_scales = scales,
     final_states = states,
-    n_batches = n_batches,
-    batch_sizes = batch_sizes,
-    warmup_used = warmup_used,
-    accept_history = accept_history,
-    seed_next = seed + n_batches
+    final_L = if (np > 1L) current_L else NULL,
+    n_batches = batches_run,
+    batch_sizes = batch_sizes[seq_len(batches_run)],
+    warmup_used = warmup_consumed,
+    accept_history = accept_history[, seq_len(batches_run), drop = FALSE],
+    seed_next = seed + batches_run
   )
 }
 
