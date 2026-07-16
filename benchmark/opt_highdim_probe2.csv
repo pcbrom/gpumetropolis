@@ -1,0 +1,4 @@
+"case","method","ess_per_sec","wall_sec","estimate","tag"
+"logistic_d21","gpum_mala",29605.88275867,1.052,0.842242252983613,"probe2"
+"logistic_d21","gpum_rwm",3377.94735234212,0.724,0.841905132202822,"probe2"
+"logistic_d21","Stan",9949.53972300312,3.116,0.842649548834,"probe2"
