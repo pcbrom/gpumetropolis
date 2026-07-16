@@ -19,6 +19,7 @@ gpu_metropolis(
   gamma = NULL,
   de_noise = 0.001,
   de_every = NULL,
+  de_sync = FALSE,
   seed = 1L,
   backend = c("auto", "cpu", "cuda", "vulkan")
 )
@@ -97,6 +98,16 @@ irreducible when the ensemble collapses onto a subspace. Default
 frozen population snapshot used for the difference vectors in
 \code{method = "de"}. Ignored for the other methods. When \code{NULL}
 (default), uses \code{max(n_chains, 10)}.}
+
+\item{de_sync}{Logical. When \code{TRUE}, \code{method = "de"} runs the synchronous
+per-generation Differential Evolution (path B): the population advances
+one generation at a time behind a barrier with a double buffer, so every
+proposal reads the previous generation, the canonical DE-MC mixing of
+ter Braak (2006). Better per-iteration mixing on curved or strongly
+correlated targets, at the cost of a barrier per generation. Currently
+CPU only (\code{backend = "cpu"}); the warmup is trim-only on this path and
+\code{proposal_sd} is the fixed jitter base. Default \code{FALSE}, the batched
+snapshot path A.}
 
 \item{seed}{Integer seed. Each chain advances its own counter-based stream
 from a triple32 hash; the seed is itself hashed, so runs with consecutive

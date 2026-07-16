@@ -1,3 +1,16 @@
+# gpumetropolis 0.4.2
+
+- `gpu_metropolis(method = "de", de_sync = TRUE)` adds the synchronous
+  per-generation Differential Evolution path (path B). The population advances
+  one generation at a time behind a barrier with a double buffer, so every
+  chain's proposal reads the whole previous generation, the canonical DE-MC
+  mixing of ter Braak (2006); the difference pair excludes the proposing
+  chain. This complements the default batched-snapshot path A, whose pool
+  refreshes every `de_every` iterations: path B refreshes it every generation,
+  which helps on curved or strongly correlated targets where a stale pool
+  loses efficiency. The synchronous path runs on the CPU backend in this
+  release; its warmup is trim-only and `proposal_sd` is the fixed jitter base.
+
 # gpumetropolis 0.4.1
 
 - A plotting layer for the joint posterior and the Bayesian decisions.
@@ -58,8 +71,8 @@
   snapshot is fixed within a batch the chains stay independent during
   the batch, so the block-per-chain kernel is unchanged in structure;
   the proposal increment is symmetric, so the acceptance ratio is the
-  density ratio alone. A per-generation in-kernel variant is planned for
-  0.4.1 under `de_sync = TRUE`.
+  density ratio alone. A per-generation synchronous variant ships in 0.4.2 under
+  `de_sync = TRUE`.
 - `gpum_diagnose(fit)` recognises a DE fit: the per-parameter summary
   covers every chain (there is no cold chain to collapse to), an extra
   row of panels shows the per-chain acceptance and the ensemble spread

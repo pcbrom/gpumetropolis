@@ -176,6 +176,59 @@ fn rust_loglik_pointwise(
     )
 }
 
+/// Run the synchronous Differential Evolution sampler (path B, CPU native).
+///
+/// Internal worker behind `gpu_metropolis(method = "de", de_sync = TRUE)`.
+/// The population advances one generation at a time behind a barrier with a
+/// double buffer, the canonical per-generation DE-MC mixing.
+/// @noRd
+#[extendr]
+fn rust_gpu_metropolis_de_sync(
+    loglik_code: Vec<i32>,
+    loglik_consts: Vec<f64>,
+    n_params: i32,
+    data: Vec<f64>,
+    n_cols: i32,
+    n_obs: i32,
+    prior_code: Vec<i32>,
+    prior_consts: Vec<f64>,
+    init: Vec<f64>,
+    proposal_sd: Vec<f64>,
+    n_iter: i32,
+    seed: f64,
+    gamma: f64,
+    de_noise: f64,
+) -> List {
+    let ll_code: Vec<u32> = loglik_code.iter().map(|&v| v as u32).collect();
+    let pr_code: Vec<u32> = prior_code.iter().map(|&v| v as u32).collect();
+    let res = cpu_native::run_de_sync(
+        &ll_code,
+        &loglik_consts,
+        &pr_code,
+        &prior_consts,
+        n_params as usize,
+        &data,
+        n_cols as usize,
+        n_obs as usize,
+        &init,
+        &proposal_sd,
+        n_iter as usize,
+        seed as u32,
+        gamma,
+        de_noise,
+    );
+    let draws: Vec<f64> = res.draws.iter().map(|&v| v as f64).collect();
+    let accept_rate: Vec<f64> = res.accept_rate.iter().map(|&v| v as f64).collect();
+    list!(
+        draws = draws,
+        accept_rate = accept_rate,
+        last_log_post = res.last_log_post,
+        n_iter = res.n_iter as i32,
+        n_chains = res.n_chains as i32,
+        n_params = res.n_params as i32
+    )
+}
+
 // Macro to generate exports.
 // This ensures exported functions are registered with R.
 // See corresponding C code in `entrypoint.c`.
@@ -187,4 +240,5 @@ extendr_module! {
     fn rust_gpu_metropolis;
     fn rust_loglik_batch;
     fn rust_loglik_pointwise;
+    fn rust_gpu_metropolis_de_sync;
 }

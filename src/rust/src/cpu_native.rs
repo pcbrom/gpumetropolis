@@ -128,6 +128,121 @@ pub fn loglik_pointwise(
     out
 }
 
+/// Synchronous Differential Evolution MCMC (path B): the population advances
+/// one generation at a time behind a barrier, with a double buffer so every
+/// chain's proposal in generation `t + 1` reads the whole population of
+/// generation `t`. This is the canonical per-generation mixing of ter Braak
+/// (2006); the batched path A instead freezes the pool for a whole batch.
+/// The difference pair excludes the proposing chain, per the standard scheme.
+#[allow(clippy::too_many_arguments)]
+pub fn run_de_sync(
+    code: &[u32],
+    consts: &[f64],
+    prior_code: &[u32],
+    prior_consts: &[f64],
+    n_params: usize,
+    data: &[f64],
+    n_cols: usize,
+    n_obs: usize,
+    init: &[f64],
+    proposal_sd: &[f64],
+    n_iter: usize,
+    seed: u32,
+    gamma: f64,
+    de_noise: f64,
+) -> ChainResult {
+    let n_chains = init.len() / n_params;
+    let two_pi = 6.283185307179586f64;
+
+    let jit = crate::jit::compile_loglik(code, consts).ok();
+    let log_post = |params: &[f64]| -> f64 {
+        let data_ll = match &jit {
+            Some(j) => j.eval(params, data, n_obs, n_cols),
+            None => interp_loglik(code, consts, params, data, n_cols, n_obs),
+        };
+        data_ll + vm_eval(prior_code, prior_consts, params, &[], 0)
+    };
+
+    let mut pop_cur: Vec<f64> = init.to_vec();
+    let mut pop_next: Vec<f64> = vec![0.0; pop_cur.len()];
+    let mut cur_lp: Vec<f64> = (0..n_chains)
+        .into_par_iter()
+        .map(|c| log_post(&pop_cur[c * n_params..(c + 1) * n_params]))
+        .collect();
+    let mut ctrs: Vec<u32> = vec![0; n_chains];
+    let mut accepts: Vec<u32> = vec![0; n_chains];
+    let seedmixes: Vec<u32> = (0..n_chains)
+        .map(|c| triple32(seed).wrapping_add((c as u32).wrapping_mul(2654435761)))
+        .collect();
+    let mut draws = vec![0.0f32; n_iter * n_chains * n_params];
+
+    for t in 0..n_iter {
+        // One generation: every chain proposes against the generation-t pool
+        // and writes its new state into the generation-(t+1) buffer. The
+        // rayon pass is the barrier.
+        let gen: Vec<(Vec<f64>, f64, u32, bool)> = (0..n_chains)
+            .into_par_iter()
+            .map(|c| {
+                let pbase = c * n_params;
+                let seedmix = seedmixes[c];
+                let mut ctr = ctrs[c];
+                let state = &pop_cur[pbase..pbase + n_params];
+                // Pair (a, b) from the current generation, excluding self.
+                ctr += 1;
+                let mut a = (rand_uniform(seedmix, ctr) * n_chains as f64) as usize;
+                if a >= n_chains { a = n_chains - 1; }
+                if a == c { a = (a + 1) % n_chains; }
+                ctr += 1;
+                let mut b = (rand_uniform(seedmix, ctr) * n_chains as f64) as usize;
+                if b >= n_chains { b = n_chains - 1; }
+                while b == c || b == a { b = (b + 1) % n_chains; }
+                ctr += 1;
+                let g = if rand_uniform(seedmix, ctr) < 0.1 { 1.0 } else { gamma };
+                let abase = a * n_params;
+                let bbase = b * n_params;
+                let mut prop = vec![0.0f64; n_params];
+                for j in 0..n_params {
+                    ctr += 1;
+                    let u1 = rand_uniform(seedmix, ctr);
+                    ctr += 1;
+                    let u2 = rand_uniform(seedmix, ctr);
+                    let z = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
+                    let diff = pop_cur[abase + j] - pop_cur[bbase + j];
+                    prop[j] = state[j] + g * diff
+                        + de_noise * proposal_sd[pbase + j] * z;
+                }
+                let plp = log_post(&prop);
+                ctr += 1;
+                let u = rand_uniform(seedmix, ctr);
+                if u.ln() < plp - cur_lp[c] {
+                    (prop, plp, ctr, true)
+                } else {
+                    (state.to_vec(), cur_lp[c], ctr, false)
+                }
+            })
+            .collect();
+
+        for (c, (state, lp, ctr, accepted)) in gen.into_iter().enumerate() {
+            let pbase = c * n_params;
+            pop_next[pbase..pbase + n_params].copy_from_slice(&state);
+            cur_lp[c] = lp;
+            ctrs[c] = ctr;
+            if accepted { accepts[c] += 1; }
+            for j in 0..n_params {
+                draws[t + n_iter * (c + n_chains * j)] = state[j] as f32;
+            }
+        }
+        std::mem::swap(&mut pop_cur, &mut pop_next);
+    }
+
+    let accept_rate: Vec<f32> = accepts
+        .iter()
+        .map(|&a| if n_iter == 0 { 0.0 } else { a as f32 / n_iter as f32 })
+        .collect();
+    let last_log_post = cur_lp;
+    ChainResult { n_iter, n_chains, n_params, draws, accept_rate, last_log_post }
+}
+
 /// Run the whole-chain Metropolis sampler natively, parallel over chains.
 #[allow(clippy::too_many_arguments)]
 pub fn run(

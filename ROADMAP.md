@@ -129,28 +129,31 @@ discrete deliverable, validated before the next opens.
   likelihood and Bayes factor by thermodynamic integration. The posterior
   predictive check and Bayesian p-value are deferred to a later release, since
   they need replicated-data generation from an arbitrary likelihood, which the
-  synthesis path of 0.8.0 introduces.
+  synthesis path of 0.9.0 introduces.
 - 0.4.1 (delivered 2026-06-29): a plotting layer for the joint posterior
   (pairs, credible regions, level-curve and 3D surface), explanatory figures
   for the Bayesian decisions, the observed-against-generated check
   (`gpum_ppc`, `gpum_density_compare`), and three real-data case-study
   vignettes with a live head-to-head against the established packages.
-- 0.4.2: the per-generation in-kernel Differential Evolution path under
+- 0.4.2 (delivered 2026-07-03): the synchronous per-generation Differential
+  Evolution path under
   `de_sync = TRUE`, for the canonical per-iteration mixing on curved or
   strongly correlated targets.
-- 0.5.0: bivariate copula workflow with the four common families.
-- 0.6.0: per-column marginal auto-selection.
-- 0.7.0: vine copula for `d > 2`.
-- 0.8.0: synthesis, `generate(fit, n)`.
-- 0.9.0: extreme optimisation for honest competitive performance. The live
+- 0.5.0: extreme optimisation for honest competitive performance, pulled ahead
+  of the application arc because the didactic book is gated on it. The live
   head-to-heads of the 0.4.1 case studies show the package competitive but not
   ahead on small single-chain problems, where a tuned conjugate or gradient
-  sampler leads. This milestone closes that gap by engineering: fused
-  likelihood kernels, mixed precision, single-chain proposal efficiency and
-  whatever the profiles demand, until the package wins the live head-to-heads
-  fairly, proven on the registered benchmark rather than asserted. The didactic
-  book below is gated on this milestone, so its claim that the package is the
-  right tool is earned experimentally.
+  sampler leads. This milestone closes that gap by engineering: full-covariance
+  adaptive proposals per chain, fused likelihood kernels, mixed precision,
+  single-chain proposal efficiency and whatever the profiles demand, until the
+  package wins the live head-to-heads fairly, proven on the registered
+  benchmark rather than asserted. The didactic book below is gated on this
+  milestone, so its claim that the package is the right tool is earned
+  experimentally.
+- 0.6.0: bivariate copula workflow with the four common families.
+- 0.7.0: per-column marginal auto-selection.
+- 0.8.0: vine copula for `d > 2`.
+- 0.9.0: synthesis, `generate(fit, n)`.
 - 1.0.0: documentation and API polish as the reference release.
 
 Tier 2 (fused kernels for common likelihoods) and Tier 5 (vector and matrix
@@ -203,7 +206,7 @@ there. Three paradigms, classical, Bayesian and machine learning, answer the
 same question and meet or part on stated terms.
 
 Two conditions govern it. First, sequencing: the book comes only after the
-0.9.0 extreme-optimisation milestone, so that its claim that `gpumetropolis` is
+0.5.0 extreme-optimisation milestone, so that its claim that `gpumetropolis` is
 the right tool is earned in fair, honest, experimental head-to-heads against
 the established packages, not asserted. A textbook that recommends a tool must
 show that tool winning on the merits. Second, direction: the book guides the
@@ -248,4 +251,4 @@ the 1.0.0 release lands:
 
 The concrete choice between these two directions is recorded as a
 post-1.0.0 decision, after 2026-11-02. The interim is the v0.4.0
-through v0.8.0 march already on the calendar.
+through v0.9.0 march already on the calendar.

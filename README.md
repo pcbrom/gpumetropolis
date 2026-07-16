@@ -218,12 +218,14 @@ The package is released through R-universe; see Installation above.
 The direction beyond the current release is recorded, tiered, in
 [`ROADMAP.md`](https://github.com/pcbrom/gpumetropolis/blob/main/ROADMAP.md).
 The in-scope Metropolis-Hastings family is now complete through Differential
-Evolution MCMC (v0.4.0); a plotting layer follows as v0.4.1 and a
-per-generation in-kernel DE variant as v0.4.2 under `de_sync = TRUE`. The
-application trajectory then opens with the
-bivariate copula workflow (v0.5.0), per-column marginal auto-selection
-(v0.6.0), vine copula for higher dimension (v0.7.0) and synthesis
-(v0.8.0). The distribution catalogue that drives the marginal auto-selection
+Evolution MCMC (v0.4.0) and the plotting layer of v0.4.1; a per-generation
+in-kernel DE variant is reserved as v0.4.2 under `de_sync = TRUE`. Next comes
+an extreme-optimisation milestone (v0.5.0), pulled ahead of the application
+arc, aimed at winning the live head-to-heads of the case-study vignettes
+fairly. The application trajectory then follows with the bivariate copula
+workflow (v0.6.0), per-column marginal auto-selection (v0.7.0), vine copula
+for higher dimension (v0.8.0) and synthesis
+(v0.9.0). The distribution catalogue that drives the marginal auto-selection
 is specified in
 [`CATALOG_DESIGN.md`](https://github.com/pcbrom/gpumetropolis/blob/main/CATALOG_DESIGN.md).
 The long arc is a portable probabilistic computing runtime built around
@@ -443,8 +445,8 @@ formula plus `method = "pt"` against custom Stan code) and portability
 (the same kernel runs on whatever GPU is on the host), not algorithmic
 superiority.
 
-The longer arc of the package, the application path of v0.5.0 through
-v0.8.0 (bivariate copula, marginal auto-selection, vine copula,
+The longer arc of the package, the application path of v0.6.0 through
+v0.9.0 (bivariate copula, marginal auto-selection, vine copula,
 synthesis), is where the design is intended to deliver something that
 no current single R package puts together end to end: dataset in,
 ranked Bayesian fits out, synthetic dataset out. The MCMC engine is

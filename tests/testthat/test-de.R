@@ -92,3 +92,66 @@ test_that("gpum_diagnose recognises a DE fit", {
   expect_true("de_hint" %in% names(res))
   expect_false(is.null(fit$adaptation$disp_history))
 })
+
+test_that("de_sync recovers the correlated bivariate posterior (path B)", {
+  set.seed(1)
+  rho <- 0.9
+  Sigma <- matrix(c(1, rho, rho, 1), 2, 2)
+  n <- 500
+  y <- matrix(rnorm(n * 2), n, 2) %*% chol(Sigma)
+  y[, 1] <- y[, 1] + 2
+  y[, 2] <- y[, 2] - 1
+  ybar <- colMeans(y)
+  Si <- solve(Sigma)
+  loglik <- stats::as.formula(sprintf(
+    "~ -0.5 * (%.6f*(y1-mu1)^2 + 2*%.6f*(y1-mu1)*(y2-mu2) + %.6f*(y2-mu2)^2)",
+    Si[1, 1], Si[1, 2], Si[2, 2]))
+  m <- gpum_model(loglik, params = c("mu1", "mu2"), data = c("y1", "y2"))
+  fit <- gpu_metropolis(m, data = list(y1 = y[, 1], y2 = y[, 2]),
+                        n_iter = 8000, n_chains = 16, method = "de",
+                        de_sync = TRUE, proposal_sd = 0.05,
+                        seed = 1, backend = "cpu")
+  expect_true(isTRUE(fit$de_sync))
+  d1 <- as.vector(fit$draws[, , "mu1"])
+  d2 <- as.vector(fit$draws[, , "mu2"])
+  expect_lt(abs(mean(d1) - ybar[1]), 0.02)
+  expect_lt(abs(mean(d2) - ybar[2]), 0.02)
+  expect_lt(abs(stats::cor(d1, d2) - rho), 0.05)
+  expect_lt(rhat(fit$draws[, , "mu1"], warmup = 0), 1.05)
+})
+
+test_that("de_sync is reproducible and refuses GPU backends", {
+  set.seed(1)
+  y <- rnorm(300, mean = 1, sd = 2)
+  m <- gpum_model(~ -((y - mu)^2) / 8, params = "mu", data = "y")
+  f1 <- gpu_metropolis(m, data = list(y = y), n_iter = 600, n_chains = 8,
+                       method = "de", de_sync = TRUE, seed = 7, backend = "cpu")
+  f2 <- gpu_metropolis(m, data = list(y = y), n_iter = 600, n_chains = 8,
+                       method = "de", de_sync = TRUE, seed = 7, backend = "cpu")
+  expect_identical(f1$draws, f2$draws)
+  avail <- gpumetropolis:::rust_available_backends()
+  if ("cuda" %in% avail) {
+    expect_error(
+      gpu_metropolis(m, data = list(y = y), n_iter = 200, n_chains = 8,
+                     method = "de", de_sync = TRUE, backend = "cuda"),
+      "de_sync")
+  }
+})
+
+test_that("de_sync mixes at least as well as path A on the banana ridge", {
+  set.seed(1)
+  banana <- gpum_model(
+    loglik = ~ 0, params = c("x1", "x2"),
+    prior  = ~ -x1^2 / 200 - 0.5 * (x2 + 0.1 * x1^2 - 10)^2)
+  init <- cbind(rnorm(24, 0, 8), rnorm(24, 0, 4))
+  fa <- gpu_metropolis(banana, init = init, n_iter = 6000, method = "de",
+                       seed = 3, backend = "cpu")
+  fb <- gpu_metropolis(banana, init = init, n_iter = 6000, method = "de",
+                       de_sync = TRUE, proposal_sd = 0.1, seed = 3,
+                       backend = "cpu")
+  ess_a <- ess(fa$draws[, , "x1"], warmup = 0)
+  ess_b <- ess(fb$draws[, , "x1"], warmup = 0)
+  # Path B refreshes the pool every generation; on the curved ridge it should
+  # not mix worse than the batched pool by more than sampling noise.
+  expect_gt(ess_b, 0.5 * ess_a)
+})

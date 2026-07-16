@@ -150,6 +150,15 @@ print.gpum_model <- function(x, ...) {
 #'   frozen population snapshot used for the difference vectors in
 #'   `method = "de"`. Ignored for the other methods. When `NULL`
 #'   (default), uses `max(n_chains, 10)`.
+#' @param de_sync Logical. When `TRUE`, `method = "de"` runs the synchronous
+#'   per-generation Differential Evolution (path B): the population advances
+#'   one generation at a time behind a barrier with a double buffer, so every
+#'   proposal reads the previous generation, the canonical DE-MC mixing of
+#'   ter Braak (2006). Better per-iteration mixing on curved or strongly
+#'   correlated targets, at the cost of a barrier per generation. Currently
+#'   CPU only (`backend = "cpu"`); the warmup is trim-only on this path and
+#'   `proposal_sd` is the fixed jitter base. Default `FALSE`, the batched
+#'   snapshot path A.
 #' @param seed Integer seed. Each chain advances its own counter-based stream
 #'   from a triple32 hash; the seed is itself hashed, so runs with consecutive
 #'   integer seeds get independent streams.
@@ -179,6 +188,7 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
                            adapt = TRUE, method = c("rwm", "pt", "de"),
                            temperatures = NULL, swap_every = NULL,
                            gamma = NULL, de_noise = 1e-3, de_every = NULL,
+                           de_sync = FALSE,
                            seed = 1L,
                            backend = c("auto", "cpu", "cuda", "vulkan")) {
   if (!inherits(model, "gpum_model")) {
@@ -371,6 +381,41 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
     }
     if (is.null(de_every)) {
       de_every <- max(as.integer(n_chains), 10L)
+    }
+    if (isTRUE(de_sync)) {
+      # Path B: synchronous per-generation DE, CPU native only. The Rust side
+      # loops the generations behind a barrier with a double buffer; the host
+      # trims the warmup rows, so this path is trim-only (no Welford).
+      if (!identical(backend, "cpu")) {
+        stop("`de_sync = TRUE` runs on `backend = \"cpu\"` in this release; ",
+             "the synchronous path needs a per-generation barrier that the ",
+             "block-per-chain GPU kernel does not expose yet.", call. = FALSE)
+      }
+      res <- rust_gpu_metropolis_de_sync(
+        model$loglik$code, model$loglik$consts, np,
+        as.numeric(data_flat), model$n_cols, n_obs,
+        model$prior$code, model$prior$consts,
+        as.numeric(t(init_mat)), proposal_sd_flat,
+        as.integer(n_iter), as.numeric(seed),
+        as.numeric(gamma), as.numeric(de_noise)
+      )
+      draws <- array(
+        res$draws,
+        dim = c(res$n_iter, res$n_chains, res$n_params),
+        dimnames = list(NULL, NULL, model$params)
+      )
+      kept <- res$n_iter - warmup
+      if (warmup > 0L) {
+        draws <- draws[seq.int(warmup + 1L, res$n_iter), , , drop = FALSE]
+      }
+      return(structure(
+        list(draws = draws, accept_rate = res$accept_rate, model = model,
+             n_iter = kept, n_iter_total = res$n_iter, warmup = warmup,
+             n_chains = res$n_chains, n_params = np, backend = backend,
+             seed = seed, method = "de", gamma = gamma, de_noise = de_noise,
+             de_sync = TRUE),
+        class = "gpum_fit"
+      ))
     }
     de <- .de_orchestrate(
       rust_call = rust_call, np = np, n_chains = n_chains,

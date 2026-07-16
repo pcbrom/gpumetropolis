@@ -44,4 +44,10 @@ rust_loglik_batch <- function(loglik_code, loglik_consts, n_params, data, n_cols
 #' @noRd
 rust_loglik_pointwise <- function(loglik_code, loglik_consts, n_params, data, n_cols, n_obs, points) .Call(wrap__rust_loglik_pointwise, loglik_code, loglik_consts, n_params, data, n_cols, n_obs, points)
 
+#' Run the synchronous Differential Evolution sampler (path B, CPU native).
+#'
+#' Internal worker behind `gpu_metropolis(method = "de", de_sync = TRUE)`.
+#' @noRd
+rust_gpu_metropolis_de_sync <- function(loglik_code, loglik_consts, n_params, data, n_cols, n_obs, prior_code, prior_consts, init, proposal_sd, n_iter, seed, gamma, de_noise) .Call(wrap__rust_gpu_metropolis_de_sync, loglik_code, loglik_consts, n_params, data, n_cols, n_obs, prior_code, prior_consts, init, proposal_sd, n_iter, seed, gamma, de_noise)
+
 # nolint end
