@@ -50,4 +50,12 @@ rust_loglik_pointwise <- function(loglik_code, loglik_consts, n_params, data, n_
 #' @noRd
 rust_gpu_metropolis_de_sync <- function(loglik_code, loglik_consts, n_params, data, n_cols, n_obs, prior_code, prior_consts, init, proposal_sd, n_iter, seed, gamma, de_noise) .Call(wrap__rust_gpu_metropolis_de_sync, loglik_code, loglik_consts, n_params, data, n_cols, n_obs, prior_code, prior_consts, init, proposal_sd, n_iter, seed, gamma, de_noise)
 
+#' Gradient of the compiled log-likelihood at a batch of points, by
+#' reverse-mode automatic differentiation of the bytecode.
+#'
+#' Internal worker behind the MALA gradient checks and the exact
+#' observed-information path of `gpum_crlb()`.
+#' @noRd
+rust_grad_batch <- function(loglik_code, loglik_consts, n_params, data, n_cols, n_obs, points) .Call(wrap__rust_grad_batch, loglik_code, loglik_consts, n_params, data, n_cols, n_obs, points)
+
 # nolint end

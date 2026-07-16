@@ -225,7 +225,14 @@ proposals from a cross-chain pooled covariance, dimension-dependent
 acceptance targets and a mid-warmup restart, and the `rwm` path now wins the
 live head-to-heads of the case-study vignettes against Stan and the generic
 samplers, median of three runs on the versioned harness (amendment v1.1 of
-`EXPERIMENT_PROTOCOL.md`). The application trajectory follows with the
+`EXPERIMENT_PROTOCOL.md`). The two regimes that verdict conceded are closed
+by 0.5.1 and 0.5.2: `gpum_lm()` samples conjugate Gaussian linear models
+exactly from the closed-form posterior (6 to 7 million effective draws per
+second, above the Gibbs specialists on their own ground), and
+`method = "mala"` adds Metropolis-adjusted Langevin with reverse-mode
+automatic differentiation of the model bytecode, JIT-compiled beside the
+density, winning threefold against Stan on a d = 21 logistic regression
+(amendment v1.2). The application trajectory follows with the
 bivariate copula
 workflow (v0.6.0), per-column marginal auto-selection (v0.7.0), vine copula
 for higher dimension (v0.8.0) and synthesis

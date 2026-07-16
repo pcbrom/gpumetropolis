@@ -1,9 +1,9 @@
 # Experiment protocol: characterising the advantage regime of gpumetropolis
 
-Version 1.1. Status: FROZEN. Pre-registered and approved by the author before
+Version 1.2. Status: FROZEN. Pre-registered and approved by the author before
 any cell of the registered experiment is executed. Freeze date of v0.1:
 2026-05-16. Amendments v0.2 to v0.6: 2026-05-16; v0.7: 2026-05-18; v0.9:
-2026-06-15; v1.0: 2026-06-29; v1.1: 2026-07-16. See section 14 for the
+2026-06-15; v1.0: 2026-06-29; v1.1 and v1.2: 2026-07-16. See section 14 for the
 amendment record.
 
 The sections up to 13 are the frozen pre-registration; amendments extend the
@@ -662,3 +662,74 @@ idiomatic single-chain configuration, while `gpumetropolis` uses its
 idiomatic 8 chains at the same total draw count; the comparison is
 between each tool used as designed at equal draws, stated here so the
 reader does not mistake it for a per-chain comparison.
+
+### v1.2, 2026-07-16: closing the conceded regimes, exact conjugate and MALA
+
+Status of this amendment. Recorded with the v0.5.1 and v0.5.2 releases.
+Amendment v1.1 conceded two regimes on structural grounds: conjugate
+models, where a Gibbs specialist draws near-independent samples from
+closed-form conditionals, and growing dimension, where gradient
+samplers scale better than any random walk. This amendment records the
+two features that close those regimes and the measurement of both, on
+the same harness discipline as v1.1 (median of three end-to-end runs,
+identical `coda::effectiveSize`, wall floors biased against
+`gpumetropolis`, per-run CSVs versioned).
+
+The conjugate answer is the closed form, not a faster chain.
+`gpum_lm()` declares the Gaussian linear model under a proper
+Normal-inverse-Gamma prior; `gpu_metropolis()` recognises it and
+samples the joint posterior exactly and independently, with the
+effective sample size equal to the draw count, and returns the
+closed-form log marginal likelihood (validated in the suite against
+numeric double integration). Where the Gibbs specialist beats every
+Metropolis variant by sampling conditionals, the closed-form joint is
+one step better still. This is a specialist path and is labelled as
+one: it applies to the conjugate family it declares, and the generic
+sampler claims of v1.1 do not rest on it.
+
+The dimension answer is the gradient. `method = "mala"` implements the
+Metropolis-adjusted Langevin algorithm with drift truncation (MALTA,
+Roberts and Tweedie 1996): the gradient of the compiled log-density
+comes from reverse-mode automatic differentiation of the bytecode,
+unrolled and JIT-compiled to straight-line native code next to the
+density itself, so a Langevin step costs a small multiple of a plain
+evaluation. The warmup preconditions drift and noise with the pooled
+posterior covariance of v1.1 and targets acceptance 0.574. The
+truncation caps the whitened drift norm at `2 sqrt(d)`; the acceptance
+correction uses the truncated mean, so the invariant distribution is
+untouched. Without the truncation the two Gaussian regressions freeze
+(the far-from-mode gradient explodes, every proposal overshoots and is
+rejected); with it every measured case runs at its target acceptance.
+The gradient path also serves `gpum_crlb()`, whose observed information
+now comes from central differences of the exact gradient instead of
+second differences of the value.
+
+The high-dimension case. Bayesian logistic regression, 20 covariates
+plus intercept (d = 21), n = 500 simulated observations with a fixed
+seed, weakly-informative normal priors; the harness is
+`benchmark/opt_highdim.R`. This is the regime v1.1 left to the
+gradient samplers: the random-walk step shrinks as d^{-1/2}, the
+Langevin step as d^{-1/6}.
+
+Results, ESS per second, median of three
+(`benchmark/opt_results_v052_median.csv`, runs f52r1-3 and fhd_r1-3).
+On the applied cases of v1.1: portpirie `gpum_mala` 139678 against
+Stan 47808 and `gpum_rwm` 52512; mtcars `gpum_mala` 110639 against
+Stan 18229; faithful `gpum_mala` 81030 against Stan 9007. On the
+high-dimension logistic: `gpum_mala` 30262 against Stan 9966 and
+`gpum_rwm` 3164, a threefold win where the random walk loses
+threefold. On the conjugate regressions the exact path draws 6438765
+(mtcars) and 7272727 (faithful) effective samples per second against
+the Gibbs specialist's 1153846 and 717013. Every comparison above
+holds in each of the three runs individually, not only in the median.
+
+What the verdict does not claim. The exact path is a conjugate
+specialist and is compared against the conjugate specialist only on
+its shared ground. MALA needs a differentiable log-density; models
+with non-differentiable points keep the random-walk and DE paths. The
+`"mala"` path runs on the CPU backend in this release; the GPU port of
+the gradient kernel is future work and no GPU claim is made here. Stan
+remains the reference for high-dimensional differentiable targets
+beyond the dimensions measured here, and no extrapolation past d = 21
+is claimed. Hardware and configuration caveats of v1.1 carry over
+unchanged.

@@ -1,3 +1,34 @@
+# gpumetropolis 0.5.2
+
+- `gpu_metropolis(method = "mala")`: the Metropolis-adjusted Langevin
+  algorithm. The proposal drifts along the gradient of the log-posterior and
+  the acceptance carries the asymmetric-proposal correction; the warmup of
+  0.5.0 preconditions drift and noise with the pooled posterior covariance
+  and targets the MALA optimum 0.574 (Roberts and Rosenthal 1998). The drift
+  is truncated at whitened norm `2 sqrt(d)` (MALTA, Roberts and Tweedie
+  1996), so a chain started far from the mode walks in instead of freezing;
+  the correction uses the truncated mean, so the exactness of the invariant
+  distribution is untouched. CPU backend in this release.
+- Reverse-mode automatic differentiation of the model bytecode. The gradient
+  of the compiled log-density is exact (validated against finite differences
+  at 1e-10 relative error in the suite) and is JIT-compiled to straight-line
+  native code next to the density, so a Langevin step costs a small multiple
+  of a plain evaluation. The interpreter tape remains as the fallback.
+- `gpum_crlb()` now builds the observed information from central differences
+  of the exact gradient instead of second differences of the value: one
+  order of numerical differentiation less, `2 d` gradient calls instead of a
+  quadratic stencil.
+- Measured outcome, recorded as amendment v1.2 of `EXPERIMENT_PROTOCOL.md`
+  (median of three runs, `benchmark/opt_results_v052_median.csv`): on the
+  high-dimension logistic regression (d = 21, the regime v1.1 conceded to
+  gradient samplers) `mala` reaches 30262 effective draws per second against
+  Stan's 9966 and the random walk's 3164; on the applied cases it multiplies
+  the 0.5.0 wins (portpirie 139678, mtcars 110639, faithful 81030, against
+  Stan's 47808, 18229 and 9007). Every comparison holds in each run
+  individually.
+- `gpum_diagnose()` reads the 0.574 target for `mala` fits in its
+  adaptation hint.
+
 # gpumetropolis 0.5.1
 
 - The conjugate fast path. `gpum_lm(formula, data, ...)` declares the

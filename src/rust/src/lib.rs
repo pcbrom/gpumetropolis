@@ -150,6 +150,34 @@ fn rust_loglik_batch(
     )
 }
 
+/// Gradient of the compiled log-likelihood (data term, summed over the
+/// observations) at a batch of points, by reverse-mode automatic
+/// differentiation of the bytecode. Point-major flat output of length
+/// `n_points * n_params`.
+/// @noRd
+#[extendr]
+#[allow(clippy::too_many_arguments)]
+fn rust_grad_batch(
+    loglik_code: Vec<i32>,
+    loglik_consts: Vec<f64>,
+    n_params: i32,
+    data: Vec<f64>,
+    n_cols: i32,
+    n_obs: i32,
+    points: Vec<f64>,
+) -> Vec<f64> {
+    let code: Vec<u32> = loglik_code.iter().map(|&v| v as u32).collect();
+    cpu_native::grad_batch(
+        &code,
+        &loglik_consts,
+        n_params as usize,
+        &data,
+        n_cols as usize,
+        n_obs as usize,
+        &points,
+    )
+}
+
 /// Evaluate the compiled log-likelihood per observation at a batch of points.
 ///
 /// Internal worker behind `gpum_waic()` and `gpum_loo()`. Returns the flat
@@ -243,4 +271,5 @@ extendr_module! {
     fn rust_loglik_batch;
     fn rust_loglik_pointwise;
     fn rust_gpu_metropolis_de_sync;
+    fn rust_grad_batch;
 }

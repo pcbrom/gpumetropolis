@@ -107,7 +107,11 @@ gpum_diagnose <- function(fit, plot = TRUE, return_data = FALSE,
   if (!is.null(fit$adaptation) && !is_de) {
     ah <- fit$adaptation$accept_history
     if (is.matrix(ah) && ncol(ah) >= 1L) {
-      target <- .am_target_accept(np)
+      target <- if (identical(fit$method, "mala")) {
+        0.574
+      } else {
+        .am_target_accept(np)
+      }
       last_mean <- mean(ah[, ncol(ah)], na.rm = TRUE)
       if (is.finite(last_mean) &&
           (last_mean < 0.8 * target || last_mean > 1.25 * target)) {

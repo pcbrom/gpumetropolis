@@ -13,7 +13,7 @@ gpu_metropolis(
   n_chains = 4L,
   warmup = NULL,
   adapt = TRUE,
-  method = c("rwm", "pt", "de"),
+  method = c("rwm", "pt", "de", "mala"),
   temperatures = NULL,
   swap_every = NULL,
   gamma = NULL,
@@ -74,7 +74,16 @@ Evolution MCMC, whose proposal for each chain is the scaled
 difference of two other chains plus a small jitter, so the proposal
 aligns with the correlation of the target through the ensemble
 geometry without an explicit covariance (ter Braak 2006). The \code{"de"}
-path needs at least 4 chains.}
+path needs at least 4 chains. \code{"mala"} is the Metropolis-adjusted
+Langevin algorithm: the proposal drifts along the gradient of the
+log-posterior, obtained by reverse-mode automatic differentiation of
+the compiled model (JIT-compiled to native code alongside the
+density), and the warmup preconditions both drift and noise with the
+pooled posterior covariance. The gradient buys mixing that scales as
+\code{d^{-1/3}} against the random walk's \code{d^{-1/2}}, so \code{"mala"} is the
+method of choice as the dimension grows; it targets acceptance 0.574
+(Roberts and Rosenthal 1998) and runs on \code{backend = "cpu"} in this
+release.}
 
 \item{temperatures}{Numeric vector of length \code{n_chains}, the
 temperature of each chain in \code{method = "pt"}. Ignored for the other

@@ -131,7 +131,16 @@ print.gpum_model <- function(x, ...) {
 #'   difference of two other chains plus a small jitter, so the proposal
 #'   aligns with the correlation of the target through the ensemble
 #'   geometry without an explicit covariance (ter Braak 2006). The `"de"`
-#'   path needs at least 4 chains.
+#'   path needs at least 4 chains. `"mala"` is the Metropolis-adjusted
+#'   Langevin algorithm: the proposal drifts along the gradient of the
+#'   log-posterior, obtained by reverse-mode automatic differentiation of
+#'   the compiled model (JIT-compiled to native code alongside the
+#'   density), and the warmup preconditions both drift and noise with the
+#'   pooled posterior covariance. The gradient buys mixing that scales as
+#'   `d^{-1/3}` against the random walk's `d^{-1/2}`, so `"mala"` is the
+#'   method of choice as the dimension grows; it targets acceptance 0.574
+#'   (Roberts and Rosenthal 1998) and runs on `backend = "cpu"` in this
+#'   release.
 #' @param temperatures Numeric vector of length `n_chains`, the
 #'   temperature of each chain in `method = "pt"`. Ignored for the other
 #'   methods. When `NULL` (default), a geometric ladder from 1 to 10 is
@@ -189,7 +198,7 @@ print.gpum_model <- function(x, ...) {
 #' @export
 gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
                            n_iter = 2000L, n_chains = 4L, warmup = NULL,
-                           adapt = TRUE, method = c("rwm", "pt", "de"),
+                           adapt = TRUE, method = c("rwm", "pt", "de", "mala"),
                            temperatures = NULL, swap_every = NULL,
                            gamma = NULL, de_noise = 1e-3, de_every = NULL,
                            de_sync = FALSE,
@@ -310,6 +319,12 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
     stop("backend '", backend, "' is not available in this build. ",
          "Available: ", paste(avail, collapse = ", "),
          ". Rebuild the package with the matching Cargo feature.",
+         call. = FALSE)
+  }
+
+  if (identical(method, "mala") && !identical(backend, "cpu")) {
+    stop("`method = \"mala\"` runs on `backend = \"cpu\"` in this release; ",
+         "the Langevin gradient path is not in the GPU kernel yet.",
          call. = FALSE)
   }
 
@@ -463,25 +478,27 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
     ))
   }
 
+  langevin <- identical(method, "mala")
   if (isTRUE(adapt) && warmup > 0L) {
     am <- .am_orchestrate_warmup(
       rust_call = rust_call, np = np, n_chains = n_chains,
       init_mat = init_mat, proposal_sd = proposal_sd_mat,
       warmup = warmup, seed = as.numeric(seed),
-      auto_stop = warmup_auto
+      auto_stop = warmup_auto, langevin = langevin
     )
     sampling_iters <- n_iter - am$warmup_used
     if (sampling_iters < 1L) sampling_iters <- 1L
     # The sampling phase carries the full-covariance proposal the warmup
     # estimated: `state + L z` with the per-chain Cholesky factor frozen at
-    # the warmup boundary, so the phase is stationary.
+    # the warmup boundary, so the phase is stationary. Under MALA the same
+    # factor is the preconditioner of the Langevin drift and noise.
     use_L <- np > 1L && !is.null(am$final_L)
     res <- rust_call(
       init_flat = as.numeric(t(am$final_init)),
       sd_flat = as.numeric(t(am$final_proposal_sd)),
       n_iter = sampling_iters,
       seed = am$seed_next,
-      proposal_mode = if (use_L) 2L else 0L,
+      proposal_mode = if (langevin) 3L else if (use_L) 2L else 0L,
       proposal_l = if (use_L) am$final_L else numeric(0)
     )
     draws <- array(
@@ -494,7 +511,7 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
            n_iter = res$n_iter, n_iter_total = am$warmup_used + res$n_iter,
            warmup = am$warmup_used, n_chains = res$n_chains,
            n_params = res$n_params, backend = backend, seed = seed,
-           method = "rwm",
+           method = if (langevin) "mala" else "rwm",
            adaptation = list(
              final_proposal_sd = am$final_proposal_sd,
              final_scales = am$final_scales,
@@ -510,7 +527,8 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
     init_flat = as.numeric(t(init_mat)),
     sd_flat = proposal_sd_flat,
     n_iter = n_iter,
-    seed = as.numeric(seed)
+    seed = as.numeric(seed),
+    proposal_mode = if (langevin) 3L else 0L
   )
 
   draws <- array(
@@ -526,7 +544,8 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
     list(draws = draws, accept_rate = res$accept_rate, model = model,
          n_iter = kept, n_iter_total = res$n_iter, warmup = warmup,
          n_chains = res$n_chains, n_params = res$n_params,
-         backend = backend, seed = seed, method = "rwm"),
+         backend = backend, seed = seed,
+         method = if (langevin) "mala" else "rwm"),
     class = "gpum_fit"
   )
 }

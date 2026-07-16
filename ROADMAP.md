@@ -155,6 +155,24 @@ discrete deliverable, validated before the next opens.
   versioned harness. The didactic book below is gated on this
   milestone, so its claim that the package is the right tool is earned
   experimentally.
+- 0.5.1 (delivered 2026-07-16): the conjugate fast path. `gpum_lm()` declares
+  the Gaussian linear model under a proper Normal-inverse-Gamma prior and the
+  fit samples the closed-form joint posterior exactly, independent draws with
+  the effective sample size equal to the draw count, plus the closed-form log
+  marginal likelihood. Closes the regime v1.1 conceded to the Gibbs
+  specialists at its root: measured at 6.4 and 7.3 million effective draws
+  per second on the conjugate regressions, against 1.2 and 0.72 million for
+  `MCMCregress`.
+- 0.5.2 (delivered 2026-07-16): the gradient. Reverse-mode automatic
+  differentiation of the model bytecode, JIT-compiled to native code, drives
+  `method = "mala"` (Metropolis-adjusted Langevin with MALTA drift
+  truncation, preconditioned by the 0.5.0 pooled covariance) and the exact
+  observed-information path of `gpum_crlb()`. Closes the regime v1.1
+  conceded to gradient samplers: on the d = 21 logistic regression `mala`
+  reaches 30262 effective draws per second against Stan's 9966, and it
+  multiplies the applied-case wins (amendment v1.2 of
+  `EXPERIMENT_PROTOCOL.md`). CPU backend in this release; the GPU port of
+  the gradient kernel is future work.
 - 0.6.0: bivariate copula workflow with the four common families.
 - 0.7.0: per-column marginal auto-selection.
 - 0.8.0: vine copula for `d > 2`.

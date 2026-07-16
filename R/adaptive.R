@@ -100,7 +100,7 @@
 # Cholesky path opens when the kernel consumes an `L` matrix per chain.
 .am_orchestrate_warmup <- function(rust_call, np, n_chains, init_mat,
                                    proposal_sd, warmup, seed,
-                                   auto_stop = FALSE) {
+                                   auto_stop = FALSE, langevin = FALSE) {
   if (warmup <= 0L) {
     stop(".am_orchestrate_warmup needs warmup > 0.", call. = FALSE)
   }
@@ -122,9 +122,11 @@
     .am_init_state(np, sigma_init = proposal_sd[c, ]^2)
   })
   # 2.38 / sqrt(d) is the optimal scaling of the proposal Cholesky under a
-  # Gaussian target (Roberts-Rosenthal 2001); starting there means the
+  # Gaussian target (Roberts-Rosenthal 2001); for MALA the optimum is
+  # 1.65 / d^(1/6) (Roberts-Rosenthal 1998). Starting there means the
   # Robbins-Monro scalar only has to correct the non-Gaussian residual.
-  scales <- rep(2.38 / sqrt(np), n_chains)
+  scale0 <- if (langevin) 1.65 / np^(1 / 6) else 2.38 / sqrt(np)
+  scales <- rep(scale0, n_chains)
   current_init <- init_mat
   current_sd <- proposal_sd
   accept_history <- matrix(NA_real_, nrow = n_chains, ncol = n_batches)
@@ -140,7 +142,9 @@
   # Robbins-Monro scalar stays per chain, so each chain still finds its own
   # acceptance.
   pool_state <- .am_init_state(np, sigma_init = proposal_sd[1L, ]^2)
-  target <- .am_target_accept(np)
+  # MALA accepts far more than a random walk at optimum: 0.574 against the
+  # dimension-dependent random-walk target (Roberts-Rosenthal 1998).
+  target <- if (langevin) 0.574 else .am_target_accept(np)
   # The first half of the warmup is treated as transient: chains started
   # away from the mode and mis-scaled proposals leave draws in the Welford
   # accumulators that inflate the covariance forever. At mid-warmup every
@@ -154,11 +158,12 @@
 
   for (b in seq_len(n_batches)) {
     use_L <- np > 1L && !is.null(current_L)
+    pm <- if (langevin) 3L else if (use_L) 2L else 0L
     res <- rust_call(init_flat = as.numeric(t(current_init)),
                      sd_flat = as.numeric(t(current_sd)),
                      n_iter = batch_sizes[b],
                      seed = seed + b - 1L,
-                     proposal_mode = if (use_L) 2L else 0L,
+                     proposal_mode = pm,
                      proposal_l = if (use_L) current_L else numeric(0))
     draws <- array(res$draws,
                    dim = c(res$n_iter, res$n_chains, res$n_params))
@@ -198,7 +203,7 @@
       states <- lapply(seq_len(n_chains), function(c) {
         .am_init_state(np, sigma_init = diag_now)
       })
-      scales <- rep(2.38 / sqrt(np), n_chains)
+      scales <- rep(scale0, n_chains)
     }
     if (np > 1L) {
       if (pool_state$n >= 2L) {

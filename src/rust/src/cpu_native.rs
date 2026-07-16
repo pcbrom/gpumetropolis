@@ -66,6 +66,213 @@ fn interp_loglik(code: &[u32], consts: &[f64], params: &[f64], data: &[f64],
     acc
 }
 
+/// Scratch buffers for the reverse-mode tape, sized to the program length
+/// and reused across observations and iterations so the gradient path does
+/// not allocate in the hot loop.
+struct GradWork {
+    vals: Vec<f64>,
+    adj: Vec<f64>,
+    lhs: Vec<u32>,
+    rhs: Vec<u32>,
+}
+
+impl GradWork {
+    fn new(max_ops: usize) -> Self {
+        GradWork {
+            vals: vec![0.0; max_ops],
+            adj: vec![0.0; max_ops],
+            lhs: vec![u32::MAX; max_ops],
+            rhs: vec![u32::MAX; max_ops],
+        }
+    }
+}
+
+/// Reverse-mode automatic differentiation of one bytecode program at one
+/// observation. The forward pass executes the stack machine while recording
+/// a tape: the value each instruction produced and the tape indices of its
+/// operands (the instruction index doubles as the tape index, since every
+/// instruction produces exactly one value). The backward pass walks the tape
+/// in reverse propagating adjoints through the textbook local derivatives,
+/// and deposits d(value)/d(params[k]) into `grad[k]`. Returns the value, so
+/// one pass yields both the density and its gradient.
+fn vm_eval_grad(code: &[u32], consts: &[f64], params: &[f64], data: &[f64],
+                data_base: usize, work: &mut GradWork, grad: &mut [f64])
+                -> f64 {
+    if code.is_empty() {
+        return 0.0;
+    }
+    let n_ops = code.len() / 2;
+    let mut istack = [0u32; 32];
+    let mut sp = 0usize;
+    for pc in 0..n_ops {
+        let op = code[2 * pc];
+        let arg = code[2 * pc + 1] as usize;
+        match op {
+            0 => {
+                work.vals[pc] = consts[arg];
+                work.lhs[pc] = u32::MAX;
+                istack[sp] = pc as u32;
+                sp += 1;
+            }
+            1 => {
+                work.vals[pc] = params[arg];
+                work.lhs[pc] = u32::MAX;
+                istack[sp] = pc as u32;
+                sp += 1;
+            }
+            2 => {
+                work.vals[pc] = data[data_base + arg];
+                work.lhs[pc] = u32::MAX;
+                istack[sp] = pc as u32;
+                sp += 1;
+            }
+            7..=10 => {
+                let l = istack[sp - 1] as usize;
+                let x = work.vals[l];
+                work.vals[pc] = match op {
+                    7 => -x,
+                    8 => x.exp(),
+                    9 => x.ln(),
+                    _ => x.sqrt(),
+                };
+                work.lhs[pc] = l as u32;
+                work.rhs[pc] = u32::MAX;
+                istack[sp - 1] = pc as u32;
+            }
+            _ => {
+                let r = istack[sp - 1] as usize;
+                let l = istack[sp - 2] as usize;
+                let a = work.vals[l];
+                let b = work.vals[r];
+                work.vals[pc] = match op {
+                    3 => a + b,
+                    4 => a - b,
+                    5 => a * b,
+                    6 => a / b,
+                    _ => a.powf(b),
+                };
+                work.lhs[pc] = l as u32;
+                work.rhs[pc] = r as u32;
+                istack[sp - 2] = pc as u32;
+                sp -= 1;
+            }
+        }
+    }
+    let root = n_ops - 1;
+    for slot in work.adj[..n_ops].iter_mut() {
+        *slot = 0.0;
+    }
+    work.adj[root] = 1.0;
+    for pc in (0..n_ops).rev() {
+        let g = work.adj[pc];
+        if g == 0.0 {
+            continue;
+        }
+        let op = code[2 * pc];
+        let arg = code[2 * pc + 1] as usize;
+        match op {
+            0 | 2 => {}
+            1 => {
+                grad[arg] += g;
+            }
+            3 => {
+                work.adj[work.lhs[pc] as usize] += g;
+                work.adj[work.rhs[pc] as usize] += g;
+            }
+            4 => {
+                work.adj[work.lhs[pc] as usize] += g;
+                work.adj[work.rhs[pc] as usize] -= g;
+            }
+            5 => {
+                let l = work.lhs[pc] as usize;
+                let r = work.rhs[pc] as usize;
+                work.adj[l] += g * work.vals[r];
+                work.adj[r] += g * work.vals[l];
+            }
+            6 => {
+                let l = work.lhs[pc] as usize;
+                let r = work.rhs[pc] as usize;
+                work.adj[l] += g / work.vals[r];
+                work.adj[r] -= g * work.vals[pc] / work.vals[r];
+            }
+            7 => {
+                work.adj[work.lhs[pc] as usize] -= g;
+            }
+            8 => {
+                work.adj[work.lhs[pc] as usize] += g * work.vals[pc];
+            }
+            9 => {
+                let l = work.lhs[pc] as usize;
+                work.adj[l] += g / work.vals[l];
+            }
+            10 => {
+                work.adj[work.lhs[pc] as usize] += g * 0.5 / work.vals[pc];
+            }
+            _ => {
+                let l = work.lhs[pc] as usize;
+                let r = work.rhs[pc] as usize;
+                let a = work.vals[l];
+                let b = work.vals[r];
+                work.adj[l] += g * b * a.powf(b - 1.0);
+                if a > 0.0 {
+                    work.adj[r] += g * work.vals[pc] * a.ln();
+                }
+            }
+        }
+    }
+    work.vals[root]
+}
+
+/// Log-posterior and its gradient in one pass: the data term summed over the
+/// observations plus the prior term, each through the reverse-mode tape.
+/// `grad` is overwritten. Returns the log-posterior value.
+#[allow(clippy::too_many_arguments)]
+fn logpost_grad(code: &[u32], consts: &[f64], prior_code: &[u32],
+                prior_consts: &[f64], params: &[f64], data: &[f64],
+                n_cols: usize, n_obs: usize, work: &mut GradWork,
+                grad: &mut [f64]) -> f64 {
+    for slot in grad.iter_mut() {
+        *slot = 0.0;
+    }
+    let mut acc = 0.0f64;
+    for obs in 0..n_obs {
+        acc += vm_eval_grad(code, consts, params, data, obs * n_cols, work,
+                            grad);
+    }
+    acc + vm_eval_grad(prior_code, prior_consts, params, &[], 0, work, grad)
+}
+
+/// Gradient of the log-likelihood (data term only), summed over the
+/// observations, at each of the `points.len() / n_params` parameter vectors.
+/// Point-major flat output. Backs host-side gradient checks and the exact
+/// observed-information path of the Cramer-Rao diagnostic (central
+/// differences of the gradient rather than second differences of the value).
+#[allow(clippy::too_many_arguments)]
+pub fn grad_batch(
+    code: &[u32],
+    consts: &[f64],
+    n_params: usize,
+    data: &[f64],
+    n_cols: usize,
+    n_obs: usize,
+    points: &[f64],
+) -> Vec<f64> {
+    let n_points = if n_params == 0 { 0 } else { points.len() / n_params };
+    let n_ops = (code.len() / 2).max(1);
+    let mut out = vec![0.0f64; n_points * n_params];
+    out.par_chunks_mut(n_params.max(1))
+        .enumerate()
+        .for_each(|(p, gslot)| {
+            let params = &points[p * n_params..(p + 1) * n_params];
+            let mut work = GradWork::new(n_ops);
+            for obs in 0..n_obs {
+                vm_eval_grad(code, consts, params, data, obs * n_cols,
+                             &mut work, gslot);
+            }
+        });
+    out
+}
+
 /// Evaluate the compiled log-likelihood, summed over observations, at each of
 /// the `points.len() / n_params` parameter vectors, returned in order. Reuses
 /// the JIT path with the interpreter fallback. This backs the host-side
@@ -268,8 +475,15 @@ pub fn run(
     let two_pi = 6.283185307179586f64;
 
     // Compile the log-likelihood to native code once; on failure use the
-    // interpreter.
+    // interpreter. Under MALA the gradient is also compiled: the reverse-mode
+    // tape unrolls to straight-line native code, so a Langevin step costs a
+    // small multiple of a plain evaluation instead of an interpreter pass.
     let jit = crate::jit::compile_loglik(code, consts).ok();
+    let jit_grad = if proposal_mode == 3 {
+        crate::jit::compile_grad(code, consts, n_params).ok()
+    } else {
+        None
+    };
     let log_post = |params: &[f64]| -> f64 {
         let data_ll = match &jit {
             Some(j) => j.eval(params, data, n_obs, n_cols),
@@ -300,7 +514,160 @@ pub fn run(
 
             let lbase = c * n_params * n_params;
             let mut zbuf = vec![0.0f64; n_params];
+
+            // MALA (proposal_mode 3) state: the gradient at the current
+            // state is cached across iterations (it only changes on accept),
+            // and the tape buffers are reused. The preconditioner is
+            // M = Ls Ls' with Ls the per-chain scaled Cholesky factor in
+            // `proposal_l`; with an empty `proposal_l` the factor is the
+            // diagonal `proposal_sd`.
+            let mala = proposal_mode == 3;
+            let n_ops = (code.len() / 2).max(prior_code.len() / 2).max(1);
+            let mut work = GradWork::new(n_ops);
+            let mut gx = vec![0.0f64; n_params];
+            let mut gy = vec![0.0f64; n_params];
+            let mut mean_x = vec![0.0f64; n_params];
+            let mut mean_y = vec![0.0f64; n_params];
+            let mut vbuf = vec![0.0f64; n_params];
+            // Value and gradient in one pass: the compiled data term plus
+            // the interpreted prior term (a handful of ops, no data loop).
+            let mut lp_grad = |params: &[f64], grad: &mut [f64],
+                               work: &mut GradWork| -> f64 {
+                match &jit_grad {
+                    Some(jg) => {
+                        let v = jg.eval_grad(params, data, n_obs, n_cols,
+                                             grad);
+                        v + vm_eval_grad(prior_code, prior_consts, params,
+                                         &[], 0, work, grad)
+                    }
+                    None => logpost_grad(code, consts, prior_code,
+                                         prior_consts, params, data, n_cols,
+                                         n_obs, work, grad),
+                }
+            };
+            if mala {
+                cur = lp_grad(&state, &mut gx, &mut work);
+            }
+            // Preconditioned, truncated Langevin drift:
+            // out = f * 0.5 * (Ls Ls') g, computed as Ls (0.5 Ls' g) with
+            // the lower-triangular factor, or through the diagonal scale
+            // when no factor is supplied. The truncation caps the whitened
+            // drift norm at `2 sqrt(d)` (MALTA, Roberts and Tweedie 1996):
+            // far from the mode the raw gradient explodes, the untruncated
+            // proposal overshoots, every step is rejected and the chain
+            // freezes; the cap bounds the step while leaving the
+            // equilibrium drift, whose whitened norm is O(sqrt(d)),
+            // untouched. The Metropolis correction stays exact because the
+            // proposal density uses the same truncated mean.
+            let drift_max = 2.0 * (n_params as f64).sqrt();
+            let half_m_times = |g: &[f64], out: &mut [f64], tmp: &mut [f64]| {
+                if proposal_l.is_empty() {
+                    for j in 0..n_params {
+                        tmp[j] = 0.5 * proposal_sd[pbase + j] * g[j];
+                    }
+                } else {
+                    for j in 0..n_params {
+                        let mut acc = 0.0;
+                        for k in j..n_params {
+                            acc += proposal_l[lbase + k * n_params + j] * g[k];
+                        }
+                        tmp[j] = 0.5 * acc;
+                    }
+                }
+                let norm = tmp[..n_params]
+                    .iter()
+                    .map(|v| v * v)
+                    .sum::<f64>()
+                    .sqrt();
+                let f = if norm > drift_max { drift_max / norm } else { 1.0 };
+                if proposal_l.is_empty() {
+                    for j in 0..n_params {
+                        out[j] = f * proposal_sd[pbase + j] * tmp[j];
+                    }
+                } else {
+                    for k in 0..n_params {
+                        let mut acc = 0.0;
+                        for j in 0..=k {
+                            acc += proposal_l[lbase + k * n_params + j] * tmp[j];
+                        }
+                        out[k] = f * acc;
+                    }
+                }
+            };
+            // -0.5 |Ls^{-1} (v - m)|^2, the log proposal density up to the
+            // constant that cancels in the ratio; forward substitution
+            // against the lower-triangular factor.
+            let log_q = |v: &[f64], m: &[f64], tmp: &mut [f64]| -> f64 {
+                let mut q = 0.0f64;
+                if proposal_l.is_empty() {
+                    for j in 0..n_params {
+                        let r = (v[j] - m[j]) / proposal_sd[pbase + j];
+                        q -= 0.5 * r * r;
+                    }
+                } else {
+                    for k in 0..n_params {
+                        let mut acc = v[k] - m[k];
+                        for j in 0..k {
+                            acc -= proposal_l[lbase + k * n_params + j] * tmp[j];
+                        }
+                        tmp[k] = acc / proposal_l[lbase + k * n_params + k];
+                        q -= 0.5 * tmp[k] * tmp[k];
+                    }
+                }
+                q
+            };
+
             for t in 0..n_iter {
+                if mala {
+                    // Metropolis-adjusted Langevin step. The drift pulls the
+                    // proposal along the preconditioned gradient, and the
+                    // acceptance carries the asymmetric-proposal correction
+                    // q(x|y) - q(y|x) of the textbook MALA ratio.
+                    half_m_times(&gx, &mut mean_x, &mut vbuf);
+                    for j in 0..n_params {
+                        mean_x[j] += state[j];
+                        ctr += 1;
+                        let u1 = rand_uniform(seedmix, ctr);
+                        ctr += 1;
+                        let u2 = rand_uniform(seedmix, ctr);
+                        zbuf[j] = (-2.0 * u1.ln()).sqrt() * (two_pi * u2).cos();
+                    }
+                    if proposal_l.is_empty() {
+                        for j in 0..n_params {
+                            prop[j] = mean_x[j] + proposal_sd[pbase + j] * zbuf[j];
+                        }
+                    } else {
+                        for k in 0..n_params {
+                            let mut acc = mean_x[k];
+                            for j in 0..=k {
+                                acc += proposal_l[lbase + k * n_params + j]
+                                    * zbuf[j];
+                            }
+                            prop[k] = acc;
+                        }
+                    }
+                    let plp = lp_grad(&prop, &mut gy, &mut work);
+                    half_m_times(&gy, &mut mean_y, &mut vbuf);
+                    for j in 0..n_params {
+                        mean_y[j] += prop[j];
+                    }
+                    let logq_diff = log_q(&state, &mean_y, &mut vbuf)
+                        - log_q(&prop, &mean_x, &mut vbuf);
+                    ctr += 1;
+                    let u = rand_uniform(seedmix, ctr);
+                    if plp.is_finite()
+                        && u.ln() < (plp - cur) / temperature + logq_diff
+                    {
+                        state.copy_from_slice(&prop);
+                        std::mem::swap(&mut gx, &mut gy);
+                        cur = plp;
+                        accepts += 1;
+                    }
+                    for j in 0..n_params {
+                        cdraws[t * n_params + j] = state[j] as f32;
+                    }
+                    continue;
+                }
                 if proposal_mode == 0 {
                     // Gaussian random walk, diagonal scale.
                     for j in 0..n_params {

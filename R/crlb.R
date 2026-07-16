@@ -112,58 +112,31 @@ gpum_crlb <- function(fit, data = NULL, at = NULL, rhat_max = 1.05) {
   n_obs <- nrow(mat)
   data_flat <- as.vector(t(mat))
 
-  # Central-difference Hessian of the log-likelihood at `at`. The step per
-  # dimension is relative to the posterior spread, floored so it stays finite
-  # when a dimension is sharp.
+  # Hessian of the log-likelihood at `at` by central differences of the
+  # reverse-mode gradient: `H[, j] = (g(at + h_j e_j) - g(at - h_j e_j)) /
+  # (2 h_j)`. One order of numerical differentiation rides on an exact
+  # gradient, so the truncation error is O(h^2) on first differences rather
+  # than the noisier second differences of the value; the whole stencil is
+  # 2 * np gradient evaluations. The step per dimension is relative to the
+  # posterior spread, floored so it stays finite when a dimension is sharp.
   h <- pmax(1e-4, 1e-3 * post_sd)
-  ll <- function(points) {
-    rust_loglik_batch(model$loglik$code, model$loglik$consts, np,
-                      as.numeric(data_flat), model$n_cols, n_obs,
-                      as.numeric(t(points)))
-  }
-  # Assemble the stencil: the centre, the per-axis plus/minus steps, and the
-  # four-corner points for each off-diagonal pair, then evaluate in one call.
-  pts <- list(at)
-  idx_diag <- list()
+  pts <- matrix(0, nrow = 2L * np, ncol = np, byrow = TRUE)
   for (j in seq_len(np)) {
     ep <- at; ep[j] <- ep[j] + h[j]
     em <- at; em[j] <- em[j] - h[j]
-    idx_diag[[j]] <- c(length(pts) + 1L, length(pts) + 2L)
-    pts <- c(pts, list(ep), list(em))
+    pts[2L * j - 1L, ] <- ep
+    pts[2L * j, ] <- em
   }
-  idx_off <- list()
-  if (np >= 2L) {
-    for (j in seq_len(np - 1L)) {
-      for (k in (j + 1L):np) {
-        pp <- at; pp[j] <- pp[j] + h[j]; pp[k] <- pp[k] + h[k]
-        pm <- at; pm[j] <- pm[j] + h[j]; pm[k] <- pm[k] - h[k]
-        mp <- at; mp[j] <- mp[j] - h[j]; mp[k] <- mp[k] + h[k]
-        mm <- at; mm[j] <- mm[j] - h[j]; mm[k] <- mm[k] - h[k]
-        idx_off[[paste(j, k)]] <- length(pts) + 1:4
-        pts <- c(pts, list(pp), list(pm), list(mp), list(mm))
-      }
-    }
-  }
-  vals <- ll(do.call(rbind, pts))
-  f0 <- vals[1L]
-
+  g_flat <- rust_grad_batch(model$loglik$code, model$loglik$consts, np,
+                            as.numeric(data_flat), model$n_cols, n_obs,
+                            as.numeric(t(pts)))
+  G <- matrix(g_flat, nrow = 2L * np, ncol = np, byrow = TRUE)
   H <- matrix(0, np, np)
   for (j in seq_len(np)) {
-    fp <- vals[idx_diag[[j]][1L]]
-    fm <- vals[idx_diag[[j]][2L]]
-    H[j, j] <- (fp - 2 * f0 + fm) / (h[j]^2)
+    H[, j] <- (G[2L * j - 1L, ] - G[2L * j, ]) / (2 * h[j])
   }
-  if (np >= 2L) {
-    for (j in seq_len(np - 1L)) {
-      for (k in (j + 1L):np) {
-        q <- idx_off[[paste(j, k)]]
-        hjk <- (vals[q[1L]] - vals[q[2L]] - vals[q[3L]] + vals[q[4L]]) /
-          (4 * h[j] * h[k])
-        H[j, k] <- hjk
-        H[k, j] <- hjk
-      }
-    }
-  }
+  # Exact symmetry does not survive the finite differences; symmetrise.
+  H <- (H + t(H)) / 2
 
   information <- -H
   # Guard 3: the observed information must be positive definite. A negative or
