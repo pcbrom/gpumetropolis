@@ -195,8 +195,17 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
                            de_sync = FALSE,
                            seed = 1L,
                            backend = c("auto", "cpu", "cuda", "vulkan")) {
+  # Conjugate fast path: a gpum_lm() model has its posterior in closed form,
+  # so the fit is exact independent sampling, no chain, no warmup, no
+  # proposal. Every sampler argument other than n_iter, n_chains and seed is
+  # meaningless there and is ignored.
+  if (inherits(model, "gpum_conjugate")) {
+    return(.gpum_exact_fit(model, n_iter = n_iter, n_chains = n_chains,
+                           seed = seed))
+  }
   if (!inherits(model, "gpum_model")) {
-    stop("`model` must be a gpum_model from gpum_model().", call. = FALSE)
+    stop("`model` must be a gpum_model from gpum_model() or a ",
+         "gpum_conjugate from gpum_lm().", call. = FALSE)
   }
   backend <- match.arg(backend)
   method <- match.arg(method)

@@ -35,6 +35,12 @@ for (meth in c("de", "rwm")) {
   add("mtcars", paste0("gpum_", meth), ess_ps(as.vector(f$draws[, , "b"]), t),
       unname(t), mean(f$draws[, , "b"]))
 }
+if (exists("gpum_lm")) {
+  t <- system.time(f <- gpu_metropolis(gpum_lm(mpg ~ wt, data = mtcars),
+        n_iter = N, n_chains = 8, seed = 1))["elapsed"]
+  add("mtcars", "gpum_exact", ess_ps(as.vector(f$draws[, , "wt"]), t),
+      unname(t), mean(f$draws[, , "wt"]))
+}
 if (requireNamespace("mcmc", quietly = TRUE)) {
   lp <- function(th) sum(dnorm(yv, th[1] + th[2] * xw, exp(th[3]), log = TRUE)) -
           0.5 * (th[1] / 50)^2 - 0.5 * (th[2] / 50)^2
@@ -67,6 +73,12 @@ for (meth in c("de", "rwm")) {
         n_chains = 8, method = meth, warmup = if (meth == "rwm") "auto" else NULL, seed = 1, backend = "cpu"))["elapsed"]
   add("faithful", paste0("gpum_", meth), ess_ps(as.vector(f$draws[, , "b"]), t),
       unname(t), mean(f$draws[, , "b"]))
+}
+if (exists("gpum_lm")) {
+  t <- system.time(f <- gpu_metropolis(gpum_lm(waiting ~ eruptions, data = d),
+        n_iter = N, n_chains = 8, seed = 1))["elapsed"]
+  add("faithful", "gpum_exact", ess_ps(as.vector(f$draws[, , "eruptions"]), t),
+      unname(t), mean(f$draws[, , "eruptions"]))
 }
 if (requireNamespace("mcmc", quietly = TRUE)) {
   yv2 <- d$waiting; xv2 <- d$eruptions

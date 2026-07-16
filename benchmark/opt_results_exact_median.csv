@@ -1,0 +1,17 @@
+"case","method","ess_per_sec"
+"faithful","gpum_exact",7499999.99999993
+"faithful","MCMCpack",734938.184813658
+"faithful","gpum_rwm",33587.1546628668
+"faithful","gpum_de",9724.25203870512
+"faithful","Stan",8949.3306395946
+"faithful","mcmc",3186.63049467089
+"mtcars","gpum_exact",6438764.55570277
+"mtcars","MCMCpack",1200000
+"mtcars","gpum_rwm",41681.2515273227
+"mtcars","Stan",18482.4365814081
+"mtcars","gpum_de",14032.6035148645
+"mtcars","mcmc",8980.25712657393
+"portpirie","gpum_rwm",54668.3736384665
+"portpirie","Stan",48620.7683043482
+"portpirie","mcmc",19119.5158772898
+"portpirie","gpum_de",18190.6288949108

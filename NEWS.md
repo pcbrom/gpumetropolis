@@ -1,3 +1,24 @@
+# gpumetropolis 0.5.1
+
+- The conjugate fast path. `gpum_lm(formula, data, ...)` declares the
+  Gaussian linear model under a proper Normal-inverse-Gamma prior, and
+  `gpu_metropolis()` recognises it and samples the closed-form joint
+  posterior exactly: independent draws, no chain, no warmup, no proposal,
+  effective sample size equal to the number of draws. This closes the
+  conjugate gap of the 0.5.0 head-to-heads at its root: where a Gibbs
+  specialist beats any Metropolis sampler by drawing from closed-form
+  conditionals, the closed-form joint is one step better still. Median of
+  three runs on the 0.5.0 harness: 6.4 and 7.5 million effective draws per
+  second on the two conjugate regressions, against 1.2 and 0.73 million for
+  the Gibbs specialist (`benchmark/opt_results_exact_median.csv`).
+- The exact fit returns the closed-form log marginal likelihood as
+  `fit$log_marginal`, validated in the test suite against numeric double
+  integration; no thermodynamic integration is needed for conjugate model
+  comparison.
+- The exact fit is a regular `gpum_fit`, so `hdi()`, `gpum_hypothesis()`,
+  `gpum_rope()`, the plotting layer and `gpum_diagnose()` consume it
+  unchanged.
+
 # gpumetropolis 0.5.0
 
 - The adaptive warmup of `method = "rwm"` now tunes a full-covariance
