@@ -57,6 +57,25 @@ Consistency is the weaker and more robust property and can hold where
 asymptotic efficiency does not; this function reports the bound only where
 the stronger normal-approximation conditions also hold.
 }
+\section{Sampling regimes}{
+
+The reference is not restricted to i.i.d. data. For independent,
+non-identically distributed rows (regression-type models, every row
+with its own covariates) the observed information is the sum of the
+per-row contributions and the asymptotic normality that backs the
+comparison holds under the Lindeberg-Feller conditions and local
+asymptotic normality (Le Cam; van der Vaart 1998, chapter 7). For
+dependent data declared through the conditional factorisation of
+\code{\link[=gpum_ts_model]{gpum_ts_model()}}, the per-row terms are conditional log-densities,
+their score is a martingale difference sequence, and the summed
+conditional curvature is again the right information: the martingale
+central limit theorem (Hall and Heyde 1980) replaces Lindeberg-Feller,
+with the Bernstein-von Mises theorem for ergodic Markov processes
+(Borwanker, Kallianpur and Prakasa Rao 1971) backing the posterior
+side. The stationarity and ergodicity of the process are model
+assumptions the guards below cannot check.
+}
+
 \seealso{
-\code{\link[=gpu_metropolis]{gpu_metropolis()}}, \code{\link[=gpum_diagnose]{gpum_diagnose()}}
+\code{\link[=gpu_metropolis]{gpu_metropolis()}}, \code{\link[=gpum_diagnose]{gpum_diagnose()}}, \code{\link[=gpum_ts_model]{gpum_ts_model()}}
 }

@@ -194,6 +194,13 @@ print.gpum_rope <- function(x, ...) {
 #' log-likelihood in the formula, including the normalising constant such as
 #' `-0.5 * log(2 * pi * sigma^2)` for a Gaussian.
 #'
+#' The pointwise decomposition also assumes the rows are exchangeable
+#' contributions, which holds for independent data (identically distributed
+#' or not) but fails for the dependent rows of a [gpum_ts_model()]
+#' conditional factorisation: leaving out a past observation that later
+#' rows condition on is not a predictive question. For dependent data use
+#' [gpum_lfo()], which respects the temporal ordering.
+#'
 #' @param fit A `gpum_fit` from [gpu_metropolis()].
 #' @param data The same data passed to [gpu_metropolis()].
 #' @param max_draws Cap on the number of posterior draws used, to bound the
@@ -237,6 +244,9 @@ print.gpum_waic <- function(x, ...) {
 #' diagnostics (Vehtari, Gelman and Gabry 2017). Like WAIC it estimates
 #' out-of-sample predictive accuracy without a marginal likelihood, and the
 #' Pareto `k` diagnostic flags observations where the estimate is unreliable.
+#' As with [gpum_waic()], the leave-one-out question is only meaningful for
+#' independent rows; for the dependent rows of a [gpum_ts_model()] use
+#' [gpum_lfo()].
 #'
 #' @param fit A `gpum_fit` from [gpu_metropolis()].
 #' @param data The same data passed to [gpu_metropolis()].

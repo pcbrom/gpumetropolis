@@ -173,6 +173,18 @@ discrete deliverable, validated before the next opens.
   multiplies the applied-case wins (amendment v1.2 of
   `EXPERIMENT_PROTOCOL.md`). CPU backend in this release; the GPU port of
   the gradient kernel is future work.
+- 0.5.3 (delivered 2026-07-16): inference beyond i.i.d. data by the
+  conditional-factorisation principle. `gpum_ts_model()` assembles the
+  lagged design of a Markov model of any finite order, with exogenous
+  covariates for the fully non-i.i.d. case; `gpum_lfo()` gives exact
+  leave-future-out cross-validation where WAIC and LOO lose their
+  exchangeability license. The documentation maps the asymptotic theory
+  per regime (Lindeberg-Feller and LAN for independent non-identical
+  rows; martingale CLT, Billingsley 1961 and the Markov Bernstein-von
+  Mises of Borwanker, Kallianpur and Prakasa Rao 1971 for dependence),
+  and the `case_nile_timeseries` vignette exercises the whole layer on
+  the Nile flow with the 1898 level shift. Declared boundary: latent
+  recursions and matrix-coupled likelihoods wait for the matrix-DSL tier.
 - 0.6.0: bivariate copula workflow with the four common families.
 - 0.7.0: per-column marginal auto-selection.
 - 0.8.0: vine copula for `d > 2`.

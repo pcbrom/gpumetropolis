@@ -34,6 +34,13 @@ different likelihoods, since the dropped constants differ. To compare
 models with WAIC or LOO, write the full normalised per-observation
 log-likelihood in the formula, including the normalising constant such as
 \code{-0.5 * log(2 * pi * sigma^2)} for a Gaussian.
+
+The pointwise decomposition also assumes the rows are exchangeable
+contributions, which holds for independent data (identically distributed
+or not) but fails for the dependent rows of a \code{\link[=gpum_ts_model]{gpum_ts_model()}}
+conditional factorisation: leaving out a past observation that later
+rows condition on is not a predictive question. For dependent data use
+\code{\link[=gpum_lfo]{gpum_lfo()}}, which respects the temporal ordering.
 }
 \seealso{
 \code{\link[=gpum_loo]{gpum_loo()}}, \code{\link[=gpum_bayes_factor]{gpum_bayes_factor()}}

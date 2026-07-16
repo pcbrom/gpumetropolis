@@ -22,6 +22,9 @@ implements the Pareto-smoothed importance-sampling estimator and its
 diagnostics (Vehtari, Gelman and Gabry 2017). Like WAIC it estimates
 out-of-sample predictive accuracy without a marginal likelihood, and the
 Pareto \code{k} diagnostic flags observations where the estimate is unreliable.
+As with \code{\link[=gpum_waic]{gpum_waic()}}, the leave-one-out question is only meaningful for
+independent rows; for the dependent rows of a \code{\link[=gpum_ts_model]{gpum_ts_model()}} use
+\code{\link[=gpum_lfo]{gpum_lfo()}}.
 }
 \seealso{
 \code{\link[=gpum_waic]{gpum_waic()}}

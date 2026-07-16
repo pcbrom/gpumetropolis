@@ -1,3 +1,41 @@
+# gpumetropolis 0.5.3
+
+- Inference beyond i.i.d. data, organised by the conditional-factorisation
+  principle: the engine's per-row sum is the exact log-likelihood whenever
+  each row is the conditional density of its observation given the previous
+  ones, which covers independent non-identically distributed rows (already
+  the case in every regression), stationary Markov dependence, and the
+  fully non-i.i.d. combination of dependence with exogenous covariates.
+- `gpum_ts_model(loglik, params, series, order, covariates, prior)` builds
+  the lagged conditional design of a Markov model of order `p`: the user
+  writes the conditional log-density referring to `<name>_lag1` through
+  `<name>_lagp`, the constructor assembles the rows and conditions on the
+  first `p` observations (the standard conditional-likelihood treatment).
+  Validated against `arima()` on simulated AR(1) and on the Nile series.
+- `gpum_lfo(ts_model, L, ...)`: exact leave-future-out cross-validation
+  with an expanding window, the model-comparison tool that respects
+  temporal ordering where the pointwise exchangeability behind WAIC and
+  PSIS-LOO fails (Burkner, Gabry and Vehtari 2020). Exact refits, no
+  importance-sampling approximation: the sampler is fast enough.
+- The documentation states the asymptotic license per regime:
+  Lindeberg-Feller and local asymptotic normality for independent
+  non-identical rows; the martingale central limit theorem (Hall and Heyde
+  1980), Billingsley (1961) and the Bernstein-von Mises theorem for ergodic
+  Markov processes (Borwanker, Kallianpur and Prakasa Rao 1971) for the
+  conditional factorisation. `gpum_crlb()` documents why the summed
+  conditional curvature is the right observed information; `gpum_waic()`
+  and `gpum_loo()` point dependent-data users to `gpum_lfo()`.
+- New case-study vignette `case_nile_timeseries`: the Nile flow with the
+  1898 Aswan level shift, exercising the stationary AR(1) (posterior
+  matches `arima` per Bernstein-von Mises), the dam covariate model
+  (dependence plus heterogeneity in one formula, persistence dropping from
+  0.52 to 0.19 once the shift is modelled), exact LFO comparison, and the
+  posterior predictive band in time.
+- Honest boundary, stated in the vignette and docs: latent recursions
+  (GARCH, state space) and matrix-coupled likelihoods (Gaussian processes)
+  are outside the per-row DSL; Stan, SMC or INLA are the right tools
+  there, until the roadmap's matrix-DSL tier.
+
 # gpumetropolis 0.5.2
 
 - `gpu_metropolis(method = "mala")`: the Metropolis-adjusted Langevin

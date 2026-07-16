@@ -1,0 +1,265 @@
+---
+title: "Case study: the Nile flow, Bayesian inference beyond i.i.d."
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Case study: the Nile flow, Bayesian inference beyond i.i.d.}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>",
+                      fig.width = 7, fig.height = 4.5)
+```
+
+Every case study so far treated the rows of the data as independent. This
+one drops that assumption in the two ways it can fail, on a real series:
+the annual flow of the Nile at Aswan, 1871 to 1970, a dataset built into R.
+The series is famous for two features that map exactly onto the regimes
+this vignette teaches: consecutive years are correlated (dependence), and
+the completion of the first Aswan dam around 1898 shifted the level of the
+whole series (non-identical distribution).
+
+```{r}
+library(gpumetropolis)
+y <- as.numeric(Nile)
+year <- 1871:1970
+plot(year, y, type = "l", lwd = 1.5,
+     main = "Annual flow of the Nile at Aswan",
+     xlab = "year", ylab = expression("flow (" * 10^8 ~ m^3 * ")"))
+abline(v = 1898, lty = 2)
+text(1900, max(y), "Aswan dam", adj = 0)
+```
+
+## 1. The three ways data stop being i.i.d.
+
+The sampler evaluates a per-row log-density and sums the rows. Under
+independence that sum is the log-likelihood, whether or not the rows share
+one distribution; under dependence the same sum is still the exact
+log-likelihood as long as each row is the *conditional* density of its
+observation given the previous ones. That single idea organises the three
+regimes.
+
+1. **Independent, not identically distributed.** Each row has its own law
+   through its covariates. Every regression in the earlier case studies is
+   already here; the theory changes name (Lindeberg-Feller and local
+   asymptotic normality instead of the i.i.d. central limit theorem), the
+   code does not change at all.
+2. **Identically distributed, not independent.** A stationary series with
+   Markov dependence. The joint density factorises as
+   $p(y_{1:n}) = p(y_{1:p}) \prod_{t > p} p(y_t \mid y_{t-1}, \dots, y_{t-p})$,
+   so the engine's row sum computes the conditional log-likelihood when the
+   rows carry the lagged values. `gpum_ts_model()` builds that design.
+3. **Neither independent nor identically distributed.** Dependence and
+   covariates at once: the conditional density of each row also moves with
+   exogenous variables. The Nile with the dam indicator is exactly this.
+
+The asymptotics that license the posterior summaries are worth stating
+once, plainly. In regime 2 and 3 the score of the conditional
+factorisation is a martingale difference sequence, so the martingale
+central limit theorem (Hall and Heyde 1980) plays the role the classical
+CLT plays for independent data; maximum likelihood for ergodic Markov
+processes behaves as in Billingsley (1961); and the Bernstein-von Mises
+theorem carries over to ergodic Markov processes (Borwanker, Kallianpur
+and Prakasa Rao 1971), which is what lets the credible intervals below be
+read the usual way. Stationarity and ergodicity are model assumptions;
+no diagnostic below can prove them.
+
+## 2. Regime 2: a stationary AR(1) for the flow
+
+The AR(1) conditional density of one row given its lag is Gaussian, and
+the whole model is three parameters: the level `mu`, the persistence
+`phi`, the innovation scale on the log scale `ls`. The formula is the
+conditional log-density of the current value `y` given `y_lag1`; the
+normalising constant is included so the model can enter predictive
+comparisons later.
+
+```{r}
+m_ar1 <- gpum_ts_model(
+  ~ -0.5 * ((y - mu - phi * (y_lag1 - mu)) / exp(ls))^2 - ls -
+    0.9189385332046727,
+  params = c("mu", "phi", "ls"),
+  series = list(y = y), order = 1,
+  prior = ~ -0.5 * ((mu - 900) / 500)^2 - 0.5 * (phi / 2)^2 -
+    0.5 * ((ls - 5) / 3)^2
+)
+m_ar1
+```
+
+The conditional factorisation gives 99 rows from 100 observations: the
+first year is conditioned on, the standard treatment of the initial state.
+The fit is a regular `gpu_metropolis()` call; the gradient path is the
+right tool since the log-density is smooth.
+
+```{r}
+fit_ar1 <- gpu_metropolis(m_ar1$model, data = m_ar1$data,
+                          n_iter = 30000, n_chains = 8,
+                          method = "mala", warmup = "auto",
+                          seed = 1, backend = "cpu")
+gpum_diagnose(fit_ar1, plot = FALSE)
+```
+
+The classical reference for this exact conditional likelihood is
+`arima()`, and the Bernstein-von Mises theorem above says the posterior
+mean and standard deviation must land on the maximum likelihood estimate
+and its standard error. They do:
+
+```{r}
+ml <- arima(y, order = c(1, 0, 0), method = "ML")
+comp <- rbind(
+  posterior = c(mean(fit_ar1$draws[, , "phi"]),
+                sd(fit_ar1$draws[, , "phi"]),
+                mean(fit_ar1$draws[, , "mu"])),
+  arima = c(coef(ml)["ar1"], sqrt(vcov(ml)["ar1", "ar1"]),
+            coef(ml)["intercept"])
+)
+colnames(comp) <- c("phi", "se(phi)", "mu")
+round(comp, 4)
+```
+
+The joint posterior view and the information-bound reference read as in
+the i.i.d. case studies; the `gpum_crlb()` documentation states why the
+observed information of the conditional factorisation is the right
+curvature here (the martingale central limit theorem stands in for
+Lindeberg-Feller).
+
+```{r}
+gpum_pairs(fit_ar1)
+```
+
+## 3. Regime 3: the dam as a covariate, dependence plus heterogeneity
+
+The AR(1) treats the 1898 level shift as persistence it has to absorb.
+The honest model gives the shift its own parameter: an exogenous indicator
+`dam` that is 0 through 1898 and 1 after, entering the conditional mean of
+each row. The rows are now neither independent (the lag is still there)
+nor identically distributed (the mean moves with the covariate): the
+fully non-i.i.d. regime, and still one formula.
+
+```{r}
+dam <- as.numeric(year >= 1899)
+m_dam <- gpum_ts_model(
+  ~ -0.5 * ((y - mu - b * dam - phi * (y_lag1 - mu - b * dam_lag)) /
+              exp(ls))^2 - ls - 0.9189385332046727,
+  params = c("mu", "b", "phi", "ls"),
+  series = list(y = y), order = 1,
+  covariates = list(dam = dam, dam_lag = c(0, dam[-length(dam)])),
+  prior = ~ -0.5 * ((mu - 1000) / 500)^2 - 0.5 * (b / 500)^2 -
+    0.5 * (phi / 2)^2 - 0.5 * ((ls - 5) / 3)^2
+)
+fit_dam <- gpu_metropolis(m_dam$model, data = m_dam$data,
+                          n_iter = 30000, n_chains = 8,
+                          method = "mala", warmup = "auto",
+                          seed = 1, backend = "cpu")
+gpum_diagnose(fit_dam, plot = FALSE)
+```
+
+Two questions, answered from the draws with the estimation-based tools of
+the Bayesian layer. Did the dam lower the flow, and by how much? And how
+much persistence remains once the shift is modelled?
+
+```{r}
+gpum_hypothesis(fit_dam, "b", lower = -Inf, upper = 0)
+hdi(as.vector(fit_dam$draws[, , "b"]))
+round(c(phi_ar1 = mean(fit_ar1$draws[, , "phi"]),
+        phi_dam = mean(fit_dam$draws[, , "phi"])), 3)
+```
+
+The persistence drops once the level shift is explained: a large part of
+what the plain AR(1) read as correlation between consecutive years was
+the two levels of the series. This is the classic lesson of confounded
+dependence and heterogeneity, visible in four lines.
+
+## 4. Model comparison that respects time
+
+WAIC and PSIS-LOO ask a leave-one-out question, and leaving out a past
+observation that later rows condition on is not a forecasting question:
+their pointwise exchangeability assumption fails on dependent rows. The
+tool that respects the arrow of time is leave-future-out cross-validation
+(Burkner, Gabry and Vehtari 2020): refit on the first `t - 1` rows, score
+the one-step-ahead predictive density of row `t`, slide forward.
+`gpum_lfo()` does this exactly, refitting at every step; the sampler is
+fast enough that no importance-sampling approximation is needed.
+
+```{r}
+lfo_ar1 <- gpum_lfo(m_ar1, L = 79L, n_iter = 4000, n_chains = 4,
+                    seed = 1, backend = "cpu")
+lfo_dam <- gpum_lfo(m_dam, L = 79L, n_iter = 4000, n_chains = 4,
+                    seed = 1, backend = "cpu")
+lfo_ar1
+lfo_dam
+```
+
+The dam model forecasts the held-out final fifth of the series better,
+which is the verdict the level shift already announced. Both formulas
+carry their Gaussian normalising constants, so the elpd values are
+comparable.
+
+## 5. Observed against generated, in time
+
+The posterior predictive check for a series compares the observed data
+with trajectories simulated from the posterior: draw parameters, then
+simulate the AR recursion forward from the first observation. The
+distribution overlay is the same discipline as in the i.i.d. case
+studies, `gpum_density_compare()` on the pooled values, plus a trajectory
+band in time.
+
+```{r}
+set.seed(2)
+draws <- matrix(fit_dam$draws, ncol = fit_dam$n_params)
+colnames(draws) <- m_dam$model$params
+sim_one <- function(th) {
+  ys <- numeric(length(y)); ys[1] <- y[1]
+  for (t in 2:length(y)) {
+    mt <- th["mu"] + th["b"] * dam[t]
+    mtl <- th["mu"] + th["b"] * dam[t - 1]
+    ys[t] <- mt + th["phi"] * (ys[t - 1] - mtl) + rnorm(1, 0, exp(th["ls"]))
+  }
+  ys
+}
+sims <- sapply(sample(nrow(draws), 200), function(i) sim_one(draws[i, ]))
+gpum_density_compare(y, as.vector(sims),
+                     main = "Nile flow: observed vs posterior-simulated")
+```
+
+```{r}
+qs <- apply(sims, 1, quantile, probs = c(0.05, 0.5, 0.95))
+plot(year, y, type = "l", lwd = 1.5, ylim = range(qs, y),
+     main = "Observed series inside the posterior predictive band",
+     xlab = "year", ylab = "flow")
+polygon(c(year, rev(year)), c(qs[1, ], rev(qs[3, ])),
+        col = grDevices::adjustcolor("steelblue", 0.25), border = NA)
+lines(year, qs[2, ], col = "steelblue", lwd = 1.5, lty = 2)
+lines(year, y, lwd = 1.5)
+abline(v = 1898, lty = 3)
+legend("topright", bty = "n", lwd = c(1.5, 1.5), lty = c(1, 2),
+       col = c("black", "steelblue"),
+       legend = c("observed", "posterior median (90% band)"))
+```
+
+## 6. Where this stops, honestly
+
+The conditional-factorisation pattern covers Markov dependence of any
+finite order, with or without exogenous covariates, and everything
+independent. It does not cover models whose likelihood needs a latent
+recursion (GARCH variances, state-space filters) or a fully coupled
+covariance (Gaussian processes, `y ~ N(mu, K(theta))`), because the
+per-row DSL has no recursion and no matrix operations. For those, Stan's
+transformed parameters, sequential Monte Carlo, or INLA are the right
+tools, and the roadmap's matrix-DSL tier is where this package would meet
+them.
+
+## References
+
+- Billingsley, P. (1961). *Statistical Inference for Markov Processes*.
+  University of Chicago Press.
+- Borwanker, J., Kallianpur, G., Prakasa Rao, B. L. S. (1971). The
+  Bernstein-von Mises theorem for Markov processes. *Annals of
+  Mathematical Statistics*, 42(4), 1241-1253.
+- Burkner, P.-C., Gabry, J., Vehtari, A. (2020). Approximate
+  leave-future-out cross-validation for Bayesian time series models.
+  *Journal of Statistical Computation and Simulation*, 90(14), 2499-2523.
+- Hall, P., Heyde, C. C. (1980). *Martingale Limit Theory and Its
+  Application*. Academic Press.
+- van der Vaart, A. W. (1998). *Asymptotic Statistics*. Cambridge
+  University Press.

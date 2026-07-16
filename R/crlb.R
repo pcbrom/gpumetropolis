@@ -52,7 +52,24 @@
 #'   `applicable` and a character `note`. When not applicable the matrix
 #'   entries are `NA` and `note` states why.
 #'
-#' @seealso [gpu_metropolis()], [gpum_diagnose()]
+#' @section Sampling regimes:
+#' The reference is not restricted to i.i.d. data. For independent,
+#' non-identically distributed rows (regression-type models, every row
+#' with its own covariates) the observed information is the sum of the
+#' per-row contributions and the asymptotic normality that backs the
+#' comparison holds under the Lindeberg-Feller conditions and local
+#' asymptotic normality (Le Cam; van der Vaart 1998, chapter 7). For
+#' dependent data declared through the conditional factorisation of
+#' [gpum_ts_model()], the per-row terms are conditional log-densities,
+#' their score is a martingale difference sequence, and the summed
+#' conditional curvature is again the right information: the martingale
+#' central limit theorem (Hall and Heyde 1980) replaces Lindeberg-Feller,
+#' with the Bernstein-von Mises theorem for ergodic Markov processes
+#' (Borwanker, Kallianpur and Prakasa Rao 1971) backing the posterior
+#' side. The stationarity and ergodicity of the process are model
+#' assumptions the guards below cannot check.
+#'
+#' @seealso [gpu_metropolis()], [gpum_diagnose()], [gpum_ts_model()]
 #' @export
 gpum_crlb <- function(fit, data = NULL, at = NULL, rhat_max = 1.05) {
   if (!inherits(fit, "gpum_fit")) {
