@@ -115,44 +115,44 @@ column gets an automatically selected marginal, whose fitted CDF transforms
 it to the unit square for the copula, completing Sklar's factorisation.
 
 ```mermaid
-flowchart TD
-    data([data: a column · a data.frame · pseudo-observations])
+flowchart TB
+    data["data: a column, a data.frame, or pseudo-observations"]
 
     subgraph DECL["Model declaration"]
-        gm["gpum_model()<br/>formula to bytecode"]
-        glm["gpum_lm()<br/>exact conjugate Gaussian"]
-        gts["gpum_ts_model()<br/>Markov / time series"]
+        gm["gpum_model (formula to bytecode)"]
+        glm["gpum_lm (exact conjugate Gaussian)"]
+        gts["gpum_ts_model (Markov, time series)"]
     end
 
-    subgraph MARG["Marginals and dependence · Sklar pipeline"]
-        gfc["gpum_fit_catalog()<br/>auto-select marginal"]
-        mcdf["marginal_cdf()"]
-        gcop["gpum_copula()<br/>auto-select family"]
-        kt["kendall_tau()<br/>tail_dependence()"]
+    subgraph MARG["Marginals and dependence (Sklar pipeline)"]
+        gfc["gpum_fit_catalog (auto-select marginal)"]
+        mcdf["marginal_cdf"]
+        gcop["gpum_copula (auto-select family)"]
+        kt["kendall_tau, tail_dependence"]
     end
 
-    subgraph ENGINE["Sampling engine · one portable kernel"]
-        gmet["gpu_metropolis()<br/>rwm · pt · de · mala · exact"]
-        back["backends: cpu · cuda · vulkan"]
+    subgraph ENGINE["Sampling engine (one portable kernel)"]
+        gmet["gpu_metropolis: rwm, pt, de, mala, exact"]
+        back["backends: cpu, cuda, vulkan"]
     end
 
-    fit(["gpum_fit"])
+    fit["gpum_fit"]
 
     subgraph DIAG["Diagnostics"]
-        gd["gpum_diagnose()<br/>rhat() · ess()"]
+        gd["gpum_diagnose, rhat, ess"]
     end
 
     subgraph INFER["Bayesian inference and testing"]
-        est["hdi() · gpum_hypothesis() · gpum_rope()"]
-        pred["gpum_waic() · gpum_loo() · gpum_lfo()"]
-        evid["gpum_evidence() · gpum_bayes_factor()"]
-        crlb["gpum_crlb() · Cramer-Rao bound"]
+        est["hdi, gpum_hypothesis, gpum_rope"]
+        pred["gpum_waic, gpum_loo, gpum_lfo"]
+        evid["gpum_evidence, gpum_bayes_factor"]
+        crlb["gpum_crlb (Cramer-Rao bound)"]
     end
 
     subgraph VIS["Visual inspection"]
-        pairs["gpum_pairs() · gpum_surface() · gpum_region()"]
-        ppc["gpum_ppc() · gpum_density_compare()"]
-        plt["plot() methods"]
+        pairs["gpum_pairs, gpum_surface, gpum_region"]
+        ppc["gpum_ppc, gpum_density_compare"]
+        plt["plot methods"]
     end
 
     data --> DECL
@@ -169,15 +169,72 @@ flowchart TD
     fit --> INFER
     fit --> VIS
 
-    classDef decl fill:#e3f0fb,stroke:#2b6cb0,color:#1a365d
-    classDef marg fill:#eef7ee,stroke:#2f855a,color:#22543d
-    classDef eng fill:#eae6f7,stroke:#6b46c1,color:#322659
-    classDef out fill:#fdf2e6,stroke:#c05621,color:#7b341e
-    class gm,glm,gts decl
-    class gfc,mcdf,gcop,kt marg
-    class gmet,back eng
-    class gd,est,pred,evid,crlb,pairs,ppc,plt out
+    style DECL fill:#e3f0fb,stroke:#2b6cb0
+    style MARG fill:#eef7ee,stroke:#2f855a
+    style ENGINE fill:#eae6f7,stroke:#6b46c1
+    style DIAG fill:#fdf2e6,stroke:#c05621
+    style INFER fill:#fdf2e6,stroke:#c05621
+    style VIS fill:#fdf2e6,stroke:#c05621
 ```
+
+## Features and the problem each solves
+
+Every function is listed with the problem it addresses, grouped as in the
+diagram above.
+
+Model declaration
+
+| Function | What it does | Problem it solves |
+|---|---|---|
+| `gpum_model()` | declares any model by its per-observation log-density as a formula, compiled to portable bytecode | run one model specification on the CPU, CUDA and Vulkan backends without writing a kernel |
+| `gpum_lm()` | fits the Gaussian linear model under a conjugate prior, sampling the closed-form posterior exactly | draw independent samples (effective sample size equal to the draw count) where a Gibbs specialist would otherwise lead on conjugate regressions |
+| `gpum_ts_model()` | declares a Markov model of order `p` by conditional factorisation, with exogenous covariates | fit dependent, non-i.i.d. data (time series) with the same engine |
+
+Sampling engine
+
+| Function | What it does | Problem it solves |
+|---|---|---|
+| `gpu_metropolis(method = "rwm")` | adaptive random-walk Metropolis, warmup tunes a full-covariance proposal | general-purpose sampling with no manual proposal tuning |
+| `gpu_metropolis(method = "pt")` | parallel tempering, one chain per temperature with swaps | cross the barriers of a multimodal target a random walk cannot |
+| `gpu_metropolis(method = "de")` | Differential Evolution MCMC, proposal from the ensemble geometry | correlated targets, with no explicit covariance to tune |
+| `gpu_metropolis(method = "mala")` | Metropolis-adjusted Langevin, gradient by reverse-mode AD of the model | mix efficiently as the dimension grows, where a random walk degrades |
+| `backend = "cpu" / "cuda" / "vulkan"` | one portable kernel across the three backends | vendor-agnostic GPU acceleration for many chains or a large data set, with a CPU fallback |
+
+Marginals and dependence (the Sklar pipeline)
+
+| Function | What it does | Problem it solves |
+|---|---|---|
+| `gpum_fit_catalog()` | detects a column's support and modality, fits every eligible family, ranks by WAIC | choose the marginal distribution of a column automatically instead of guessing |
+| `marginal_cdf()` | the fitted probability-integral transform of the selected marginal | carry a column onto the unit square for the copula |
+| `gpum_copula()` | fits a bivariate copula and auto-selects the family | model the dependence structure separately from the margins, and read where in the tails the coupling lives |
+| `kendall_tau()`, `tail_dependence()` | posterior of the family-free dependence summaries | compare dependence across families and quantify extreme co-movement |
+
+Diagnostics
+
+| Function | What it does | Problem it solves |
+|---|---|---|
+| `gpum_diagnose()` | one-call per-parameter table plus a multi-panel plot and a convergence verdict | answer, in one call, whether the run converged |
+| `rhat()`, `ess()` | split R-hat and effective sample size | the standard convergence and precision measures on their own |
+
+Bayesian inference and testing
+
+| Function | What it does | Problem it solves |
+|---|---|---|
+| `hdi()` | highest density interval of a posterior | report the credible interval directly from the draws |
+| `gpum_hypothesis()` | posterior probability that a parameter lies in a stated region | answer a hypothesis as a probability, not a p-value |
+| `gpum_rope()` | probability inside a region of practical equivalence (Kruschke) | decide practical, not just statistical, significance |
+| `gpum_waic()`, `gpum_loo()` | pointwise predictive comparison for independent data | compare models by out-of-sample accuracy without a marginal likelihood |
+| `gpum_lfo()` | exact leave-future-out cross-validation | compare models on dependent data, where leave-one-out is not valid |
+| `gpum_evidence()`, `gpum_bayes_factor()` | marginal likelihood by thermodynamic integration | Bayes factors for model comparison, reusing the sampler |
+| `gpum_crlb()` | observed Fisher information and the Cramer-Rao bound by exact-gradient differences | check whether the posterior attains the information bound, and meet the classical estimator |
+
+Visual inspection
+
+| Function | What it does | Problem it solves |
+|---|---|---|
+| `gpum_pairs()`, `gpum_surface()`, `gpum_region()` | marginal and bivariate posterior views with credible regions | see the joint posterior and its convergence regions |
+| `gpum_ppc()`, `gpum_density_compare()` | overlay the model-generated distribution on the observed data | check the fit by observed against generated, on one graph |
+| `plot()` methods | a visual for every fitted object (copula, catalogue, hypothesis, ROPE, CRLB) | inspect each result, paired with its text diagnostic |
 
 ## Convergence diagnostics
 
