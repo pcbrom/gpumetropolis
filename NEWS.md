@@ -1,446 +1,113 @@
 # gpumetropolis 0.7.0
 
-- Automatic marginal distribution selection. `gpum_fit_catalog(data)` takes
-  a numeric column, detects its support and modality, fits every eligible
-  parametric family with the sampler, and ranks them by predictive
-  comparison (WAIC by default, PSIS-LOO optional). The winner's fitted
-  cumulative distribution is the probability-integral transform that feeds
-  `gpum_copula()`, so the explicit marginals and the copula together model
-  the full joint distribution, both halves of Sklar's theorem.
-- Ten families ship in the catalogue: on the real line normal, Student-t,
-  logistic and Laplace; on the positive half-line gamma, lognormal, Weibull
-  and exponential; on the unit interval beta; and the two-component Gaussian
-  mixture for bimodal columns. Every family is written in an unconstrained
-  parametrisation (log of a positive parameter), so the sampler never
-  proposes an invalid scale or shape, and every log-density carries its
-  normalising constant so WAIC compares families on the same scale.
-- New DSL operation `lgamma`, added to the interpreter, the cranelift JIT,
-  the reverse-mode automatic differentiation (with its derivative digamma)
-  and the GPU kernel. Five families (gamma, Student-t, beta among the
-  shipped ones) need the log-gamma of a shape parameter in their density.
-  The CPU path is validated against R: the value matches to 1e-15 and the
-  gradient to 1e-9. The GPU kernel `lgamma` (a Stirling approximation in
-  f32) is runtime-verified on an RTX 5090 (Blackwell, compute capability
-  12.0) on both GPU engines: the CUDA backend (through CUDA 13.0) and the
-  Vulkan backend (through wgpu) each match the CPU backend to Monte-Carlo
-  noise on the normal, gamma and beta models (mean absolute difference
-  below 1.6e-4), confirming the single portable kernel produces the same
-  inference across CPU, CUDA and Vulkan. CUDA delivers an 8x speedup at
-  2048 chains on a gamma target with N = 8000.
-- The bimodal column is fit as a two-component Gaussian mixture with its
-  components initialised at the data quartiles and their means held by a
-  data-anchored prior, which removes the empty-component degeneracy that
-  otherwise sends a mean to infinity. With the components separated the fit
-  uses MALA, which mixes more reliably than a temperature ladder on this
-  low-dimensional mixture (measured R-hat near 1.00), and the draws are
-  relabeled so the lower-location component is reported first.
-- The object carries a text diagnostic (`print`: support and modality
-  verdict, selected family, convergence R-hat and the Kolmogorov-Smirnov
-  distance of the fitted CDF, and the ranking table) and a visual one
-  (`plot`: fitted density over the histogram, the QQ plot, and the WAIC
-  ranking). `marginal_cdf()` returns the fitted probability-integral
-  transform for the copula workflow.
-- New case-study vignette `case_marginal`: the Old Faithful waiting times,
-  where the catalogue selects the mixture and recovers the two modes, and
-  the full Sklar workflow on the `airquality` pair, each column given its
-  own selected marginal before the copula binds them.
-- Actionable backend errors. A GPU launch failure is caught and the opaque
-  runtime error is followed by the probable cause and the fix. In
-  particular, a CUDA kernel that cannot compile for a newer GPU (an
-  RTX 50-series Blackwell GPU, compute capability 12.0, needs CUDA 12.8 or
-  newer) now reports that the toolkit is older than the GPU requires and
-  suggests rebuilding against a matching toolkit or running with
-  `backend = "vulkan"` or `backend = "cpu"`, instead of surfacing a bare
-  `nvrtc: invalid value for --gpu-architecture` string.
+- Automatic marginal distribution selection. `gpum_fit_catalog(data)` takes a numeric column, detects its support and modality, fits every eligible parametric family with the sampler, and ranks them by predictive comparison (WAIC by default, PSIS-LOO optional). The winner's fitted cumulative distribution is the probability-integral transform that feeds `gpum_copula()`, so the explicit marginals and the copula together model the full joint distribution, both halves of Sklar's theorem.
+- Ten families ship in the catalogue: on the real line normal, Student-t, logistic and Laplace; on the positive half-line gamma, lognormal, Weibull and exponential; on the unit interval beta; and the two-component Gaussian mixture for bimodal columns. Every family is written in an unconstrained parametrisation (log of a positive parameter), so the sampler never proposes an invalid scale or shape, and every log-density carries its normalising constant so WAIC compares families on the same scale.
+- New DSL operation `lgamma`, added to the interpreter, the cranelift JIT, the reverse-mode automatic differentiation (with its derivative digamma) and the GPU kernel. Five families (gamma, Student-t, beta among the shipped ones) need the log-gamma of a shape parameter in their density. The CPU path is validated against R: the value matches to 1e-15 and the gradient to 1e-9. The GPU kernel `lgamma` (a Stirling approximation in f32) is runtime-verified on an RTX 5090 (Blackwell, compute capability 12.0) on both GPU engines: the CUDA backend (through CUDA 13.0) and the Vulkan backend (through wgpu) each match the CPU backend to Monte-Carlo noise on the normal, gamma and beta models (mean absolute difference below 1.6e-4), confirming the single portable kernel produces the same inference across CPU, CUDA and Vulkan. CUDA delivers an 8x speedup at 2048 chains on a gamma target with N = 8000.
+- The bimodal column is fit as a two-component Gaussian mixture with its components initialised at the data quartiles and their means held by a data-anchored prior, which removes the empty-component degeneracy that otherwise sends a mean to infinity. With the components separated the fit uses MALA, which mixes more reliably than a temperature ladder on this low-dimensional mixture (measured R-hat near 1.00), and the draws are relabeled so the lower-location component is reported first.
+- The object carries a text diagnostic (`print`: support and modality verdict, selected family, convergence R-hat and the Kolmogorov-Smirnov distance of the fitted CDF, and the ranking table) and a visual one (`plot`: fitted density over the histogram, the QQ plot, and the WAIC ranking). `marginal_cdf()` returns the fitted probability-integral transform for the copula workflow.
+- New case-study vignette `case_marginal`: the Old Faithful waiting times, where the catalogue selects the mixture and recovers the two modes, and the full Sklar workflow on the `airquality` pair, each column given its own selected marginal before the copula binds them.
+- Actionable backend errors. A GPU launch failure is caught and the opaque runtime error is followed by the probable cause and the fix. In particular, a CUDA kernel that cannot compile for a newer GPU (an RTX 50-series Blackwell GPU, compute capability 12.0, needs CUDA 12.8 or newer) now reports that the toolkit is older than the GPU requires and suggests rebuilding against a matching toolkit or running with `backend = "vulkan"` or `backend = "cpu"`, instead of surfacing a bare `nvrtc: invalid value for --gpu-architecture` string.
 
 # gpumetropolis 0.6.0
 
-- The bivariate copula workflow. `gpum_copula(data, family)` fits a copula
-  to the pseudo-observations of two columns (average ranks rescaled to the
-  open unit square), so the fit is invariant to the marginal shapes and
-  isolates the dependence structure. Four families cover the qualitative
-  range: Gumbel (upper-tail dependence), Clayton (lower-tail), Frank
-  (symmetric, tail-independent) and Gaussian (elliptical, tail-independent,
-  and the one family carrying the sign of the dependence). Each family's
-  log-density compiles to the existing DSL with everything data-only
-  precomputed in R, so no engine change is needed.
-- Family auto-selection is part of the workflow: `family = "auto"` (the
-  default) fits every candidate and returns the one preferred by predictive
-  comparison (WAIC by default, PSIS-LOO optional), with the full ranking
-  table, because the choice of family is a hypothesis about tail behaviour
-  and belongs with the fit. A family whose chains do not converge is
-  withheld from the ranking rather than trusted.
-- The sampler defaults to `method = "mala"`: the copula log-density is
-  smooth and one-dimensional in the raw parameter, and the Frank family in
-  particular has a flat far tail in which a random walk strands a chain,
-  which the gradient path avoids. Validated against the `copula` package:
-  the posterior recovers the maximum-pseudo-likelihood estimate and the
-  analytic Kendall tau for all four families.
-- `kendall_tau()` and `tail_dependence()` return the posterior of the
-  family-free dependence summaries; the object carries both a text
-  diagnostic (`print`: dependence summaries, convergence R-hat, and
-  empirical-versus-model Kendall tau goodness of fit) and a visual one
-  (`plot`: fitted density contours over the pseudo-observations, the
-  parameter and tau posteriors against the empirical value, and the
-  observed-against-generated check).
-- New case-study vignette `case_copula`: the temperature and ozone pair of
-  the `airquality` data. The raw scatter suggests upper-tail dependence, the
-  formal comparison selects the symmetric tail-independent Frank family, and
-  the vignette reads the lesson that the apparent fan was marginal
-  heteroscedasticity rather than a coupling of the extremes.
+- The bivariate copula workflow. `gpum_copula(data, family)` fits a copula to the pseudo-observations of two columns (average ranks rescaled to the open unit square), so the fit is invariant to the marginal shapes and isolates the dependence structure. Four families cover the qualitative range: Gumbel (upper-tail dependence), Clayton (lower-tail), Frank (symmetric, tail-independent) and Gaussian (elliptical, tail-independent, and the one family carrying the sign of the dependence). Each family's log-density compiles to the existing DSL with everything data-only precomputed in R, so no engine change is needed.
+- Family auto-selection is part of the workflow: `family = "auto"` (the default) fits every candidate and returns the one preferred by predictive comparison (WAIC by default, PSIS-LOO optional), with the full ranking table, because the choice of family is a hypothesis about tail behaviour and belongs with the fit. A family whose chains do not converge is withheld from the ranking rather than trusted.
+- The sampler defaults to `method = "mala"`: the copula log-density is smooth and one-dimensional in the raw parameter, and the Frank family in particular has a flat far tail in which a random walk strands a chain, which the gradient path avoids. Validated against the `copula` package: the posterior recovers the maximum-pseudo-likelihood estimate and the analytic Kendall tau for all four families.
+- `kendall_tau()` and `tail_dependence()` return the posterior of the family-free dependence summaries; the object carries both a text diagnostic (`print`: dependence summaries, convergence R-hat, and empirical-versus-model Kendall tau goodness of fit) and a visual one (`plot`: fitted density contours over the pseudo-observations, the parameter and tau posteriors against the empirical value, and the observed-against-generated check).
+- New case-study vignette `case_copula`: the temperature and ozone pair of the `airquality` data. The raw scatter suggests upper-tail dependence, the formal comparison selects the symmetric tail-independent Frank family, and the vignette reads the lesson that the apparent fan was marginal heteroscedasticity rather than a coupling of the extremes.
 
 # gpumetropolis 0.5.3
 
-- Inference beyond i.i.d. data, organised by the conditional-factorisation
-  principle: the engine's per-row sum is the exact log-likelihood whenever
-  each row is the conditional density of its observation given the previous
-  ones, which covers independent non-identically distributed rows (already
-  the case in every regression), stationary Markov dependence, and the
-  fully non-i.i.d. combination of dependence with exogenous covariates.
-- `gpum_ts_model(loglik, params, series, order, covariates, prior)` builds
-  the lagged conditional design of a Markov model of order `p`: the user
-  writes the conditional log-density referring to `<name>_lag1` through
-  `<name>_lagp`, the constructor assembles the rows and conditions on the
-  first `p` observations (the standard conditional-likelihood treatment).
-  Validated against `arima()` on simulated AR(1) and on the Nile series.
-- `gpum_lfo(ts_model, L, ...)`: exact leave-future-out cross-validation
-  with an expanding window, the model-comparison tool that respects
-  temporal ordering where the pointwise exchangeability behind WAIC and
-  PSIS-LOO fails (Burkner, Gabry and Vehtari 2020). Exact refits, no
-  importance-sampling approximation: the sampler is fast enough.
-- The documentation states the asymptotic license per regime:
-  Lindeberg-Feller and local asymptotic normality for independent
-  non-identical rows; the martingale central limit theorem (Hall and Heyde
-  1980), Billingsley (1961) and the Bernstein-von Mises theorem for ergodic
-  Markov processes (Borwanker, Kallianpur and Prakasa Rao 1971) for the
-  conditional factorisation. `gpum_crlb()` documents why the summed
-  conditional curvature is the right observed information; `gpum_waic()`
-  and `gpum_loo()` point dependent-data users to `gpum_lfo()`.
-- New case-study vignette `case_nile_timeseries`: the Nile flow with the
-  1898 Aswan level shift, exercising the stationary AR(1) (posterior
-  matches `arima` per Bernstein-von Mises), the dam covariate model
-  (dependence plus heterogeneity in one formula, persistence dropping from
-  0.52 to 0.19 once the shift is modelled), exact LFO comparison, and the
-  posterior predictive band in time.
-- Honest boundary, stated in the vignette and docs: latent recursions
-  (GARCH, state space) and matrix-coupled likelihoods (Gaussian processes)
-  are outside the per-row DSL; Stan, SMC or INLA are the right tools
-  there, until the roadmap's matrix-DSL tier.
+- Inference beyond i.i.d. data, organised by the conditional-factorisation principle: the engine's per-row sum is the exact log-likelihood whenever each row is the conditional density of its observation given the previous ones, which covers independent non-identically distributed rows (already the case in every regression), stationary Markov dependence, and the fully non-i.i.d. combination of dependence with exogenous covariates.
+- `gpum_ts_model(loglik, params, series, order, covariates, prior)` builds the lagged conditional design of a Markov model of order `p`: the user writes the conditional log-density referring to `<name>_lag1` through `<name>_lagp`, the constructor assembles the rows and conditions on the first `p` observations (the standard conditional-likelihood treatment). Validated against `arima()` on simulated AR(1) and on the Nile series.
+- `gpum_lfo(ts_model, L, ...)`: exact leave-future-out cross-validation with an expanding window, the model-comparison tool that respects temporal ordering where the pointwise exchangeability behind WAIC and PSIS-LOO fails (Burkner, Gabry and Vehtari 2020). Exact refits, no importance-sampling approximation: the sampler is fast enough.
+- The documentation states the asymptotic license per regime: Lindeberg-Feller and local asymptotic normality for independent non-identical rows; the martingale central limit theorem (Hall and Heyde 1980), Billingsley (1961) and the Bernstein-von Mises theorem for ergodic Markov processes (Borwanker, Kallianpur and Prakasa Rao 1971) for the conditional factorisation. `gpum_crlb()` documents why the summed conditional curvature is the right observed information; `gpum_waic()` and `gpum_loo()` point dependent-data users to `gpum_lfo()`.
+- New case-study vignette `case_nile_timeseries`: the Nile flow with the 1898 Aswan level shift, exercising the stationary AR(1) (posterior matches `arima` per Bernstein-von Mises), the dam covariate model (dependence plus heterogeneity in one formula, persistence dropping from 0.52 to 0.19 once the shift is modelled), exact LFO comparison, and the posterior predictive band in time.
+- Honest boundary, stated in the vignette and docs: latent recursions (GARCH, state space) and matrix-coupled likelihoods (Gaussian processes) are outside the per-row DSL; Stan, SMC or INLA are the right tools there, until the roadmap's matrix-DSL tier.
 
 # gpumetropolis 0.5.2
 
-- `gpu_metropolis(method = "mala")`: the Metropolis-adjusted Langevin
-  algorithm. The proposal drifts along the gradient of the log-posterior and
-  the acceptance carries the asymmetric-proposal correction; the warmup of
-  0.5.0 preconditions drift and noise with the pooled posterior covariance
-  and targets the MALA optimum 0.574 (Roberts and Rosenthal 1998). The drift
-  is truncated at whitened norm `2 sqrt(d)` (MALTA, Roberts and Tweedie
-  1996), so a chain started far from the mode walks in instead of freezing;
-  the correction uses the truncated mean, so the exactness of the invariant
-  distribution is untouched. CPU backend in this release.
-- Reverse-mode automatic differentiation of the model bytecode. The gradient
-  of the compiled log-density is exact (validated against finite differences
-  at 1e-10 relative error in the suite) and is JIT-compiled to straight-line
-  native code next to the density, so a Langevin step costs a small multiple
-  of a plain evaluation. The interpreter tape remains as the fallback.
-- `gpum_crlb()` now builds the observed information from central differences
-  of the exact gradient instead of second differences of the value: one
-  order of numerical differentiation less, `2 d` gradient calls instead of a
-  quadratic stencil.
-- Measured outcome, recorded as amendment v1.2 of `EXPERIMENT_PROTOCOL.md`
-  (median of three runs, `benchmark/opt_results_v052_median.csv`): on the
-  high-dimension logistic regression (d = 21, the regime v1.1 conceded to
-  gradient samplers) `mala` reaches 30262 effective draws per second against
-  Stan's 9966 and the random walk's 3164; on the applied cases it multiplies
-  the 0.5.0 wins (portpirie 139678, mtcars 110639, faithful 81030, against
-  Stan's 47808, 18229 and 9007). Every comparison holds in each run
-  individually.
-- `gpum_diagnose()` reads the 0.574 target for `mala` fits in its
-  adaptation hint.
+- `gpu_metropolis(method = "mala")`: the Metropolis-adjusted Langevin algorithm. The proposal drifts along the gradient of the log-posterior and the acceptance carries the asymmetric-proposal correction; the warmup of 0.5.0 preconditions drift and noise with the pooled posterior covariance and targets the MALA optimum 0.574 (Roberts and Rosenthal 1998). The drift is truncated at whitened norm `2 sqrt(d)` (MALTA, Roberts and Tweedie 1996), so a chain started far from the mode walks in instead of freezing; the correction uses the truncated mean, so the exactness of the invariant distribution is untouched. CPU backend in this release.
+- Reverse-mode automatic differentiation of the model bytecode. The gradient of the compiled log-density is exact (validated against finite differences at 1e-10 relative error in the suite) and is JIT-compiled to straight-line native code next to the density, so a Langevin step costs a small multiple of a plain evaluation. The interpreter tape remains as the fallback.
+- `gpum_crlb()` now builds the observed information from central differences of the exact gradient instead of second differences of the value: one order of numerical differentiation less, `2 d` gradient calls instead of a quadratic stencil.
+- Measured outcome, recorded as amendment v1.2 of `EXPERIMENT_PROTOCOL.md` (median of three runs, `benchmark/opt_results_v052_median.csv`): on the high-dimension logistic regression (d = 21, the regime v1.1 conceded to gradient samplers) `mala` reaches 30262 effective draws per second against Stan's 9966 and the random walk's 3164; on the applied cases it multiplies the 0.5.0 wins (portpirie 139678, mtcars 110639, faithful 81030, against Stan's 47808, 18229 and 9007). Every comparison holds in each run individually.
+- `gpum_diagnose()` reads the 0.574 target for `mala` fits in its adaptation hint.
 
 # gpumetropolis 0.5.1
 
-- The conjugate fast path. `gpum_lm(formula, data, ...)` declares the
-  Gaussian linear model under a proper Normal-inverse-Gamma prior, and
-  `gpu_metropolis()` recognises it and samples the closed-form joint
-  posterior exactly: independent draws, no chain, no warmup, no proposal,
-  effective sample size equal to the number of draws. This closes the
-  conjugate gap of the 0.5.0 head-to-heads at its root: where a Gibbs
-  specialist beats any Metropolis sampler by drawing from closed-form
-  conditionals, the closed-form joint is one step better still. Median of
-  three runs on the 0.5.0 harness: 6.4 and 7.5 million effective draws per
-  second on the two conjugate regressions, against 1.2 and 0.73 million for
-  the Gibbs specialist (`benchmark/opt_results_exact_median.csv`).
-- The exact fit returns the closed-form log marginal likelihood as
-  `fit$log_marginal`, validated in the test suite against numeric double
-  integration; no thermodynamic integration is needed for conjugate model
-  comparison.
-- The exact fit is a regular `gpum_fit`, so `hdi()`, `gpum_hypothesis()`,
-  `gpum_rope()`, the plotting layer and `gpum_diagnose()` consume it
-  unchanged.
+- The conjugate fast path. `gpum_lm(formula, data, ...)` declares the Gaussian linear model under a proper Normal-inverse-Gamma prior, and `gpu_metropolis()` recognises it and samples the closed-form joint posterior exactly: independent draws, no chain, no warmup, no proposal, effective sample size equal to the number of draws. This closes the conjugate gap of the 0.5.0 head-to-heads at its root: where a Gibbs specialist beats any Metropolis sampler by drawing from closed-form conditionals, the closed-form joint is one step better still. Median of three runs on the 0.5.0 harness: 6.4 and 7.5 million effective draws per second on the two conjugate regressions, against 1.2 and 0.73 million for the Gibbs specialist (`benchmark/opt_results_exact_median.csv`).
+- The exact fit returns the closed-form log marginal likelihood as `fit$log_marginal`, validated in the test suite against numeric double integration; no thermodynamic integration is needed for conjugate model comparison.
+- The exact fit is a regular `gpum_fit`, so `hdi()`, `gpum_hypothesis()`, `gpum_rope()`, the plotting layer and `gpum_diagnose()` consume it unchanged.
 
 # gpumetropolis 0.5.0
 
-- The adaptive warmup of `method = "rwm"` now tunes a full-covariance
-  proposal: from the second warmup batch on, the walk is `state + L z` with
-  `L = scale * chol(Sigma_hat)`, so the proposal carries the correlations of
-  the target instead of its diagonal alone. Both backends consume the
-  Cholesky factor; dimension one keeps the scalar path.
-- `Sigma_hat` pools the Welford covariance accumulators across chains: every
-  chain targets the same posterior, and one well-fed estimate beats many
-  noisy ones. The Robbins-Monro scalar stays per chain.
-- The acceptance target is dimension-dependent (0.44 in dimension one, 0.35
-  in dimension two, down to 0.234 from dimension nine on), following the
-  numerical optima of Gelman, Roberts and Gilks (1996) instead of applying
-  the asymptotic value in every dimension.
-- At mid-warmup the covariance accumulators restart empty and the scale
-  restarts at `2.38 / sqrt(d)` with the Robbins-Monro gain back at full
-  strength. Draws from the initial transient no longer contaminate the
-  covariance the sampling phase inherits, and the scalar tuned against that
-  transient is discarded rather than corrected at a decayed gain.
-- `warmup = "auto"` ends the warmup early once the acceptance sits inside
-  the target band and the per-chain scales have stopped drifting for two
-  consecutive batches after the mid-warmup restart; the saved budget goes to
-  the sampling phase.
-- `gpum_diagnose()` flags a warmup that had not plateaued from either side:
-  last-batch acceptance below 0.8 times or above 1.25 times the
-  dimension-dependent target now triggers the adaptation hint.
-- Measured outcome, recorded as amendment v1.1 of `EXPERIMENT_PROTOCOL.md`
-  with the harness at `benchmark/opt_baseline.R` (median of three runs,
-  30000 draws, identical ESS estimator): the `rwm` path wins every applied
-  case of the case-study vignettes against Stan (portpirie 56491 vs 47808,
-  mtcars 41301 vs 17982, faithful 33362 vs 8978 effective draws per second)
-  and against the generic `mcmc::metrop` everywhere. Conjugate Gibbs
-  specialists remain ahead on conjugate regressions, as stated in the
-  amendment.
+- The adaptive warmup of `method = "rwm"` now tunes a full-covariance proposal: from the second warmup batch on, the walk is `state + L z` with `L = scale * chol(Sigma_hat)`, so the proposal carries the correlations of the target instead of its diagonal alone. Both backends consume the Cholesky factor; dimension one keeps the scalar path.
+- `Sigma_hat` pools the Welford covariance accumulators across chains: every chain targets the same posterior, and one well-fed estimate beats many noisy ones. The Robbins-Monro scalar stays per chain.
+- The acceptance target is dimension-dependent (0.44 in dimension one, 0.35 in dimension two, down to 0.234 from dimension nine on), following the numerical optima of Gelman, Roberts and Gilks (1996) instead of applying the asymptotic value in every dimension.
+- At mid-warmup the covariance accumulators restart empty and the scale restarts at `2.38 / sqrt(d)` with the Robbins-Monro gain back at full strength. Draws from the initial transient no longer contaminate the covariance the sampling phase inherits, and the scalar tuned against that transient is discarded rather than corrected at a decayed gain.
+- `warmup = "auto"` ends the warmup early once the acceptance sits inside the target band and the per-chain scales have stopped drifting for two consecutive batches after the mid-warmup restart; the saved budget goes to the sampling phase.
+- `gpum_diagnose()` flags a warmup that had not plateaued from either side: last-batch acceptance below 0.8 times or above 1.25 times the dimension-dependent target now triggers the adaptation hint.
+- Measured outcome, recorded as amendment v1.1 of `EXPERIMENT_PROTOCOL.md` with the harness at `benchmark/opt_baseline.R` (median of three runs, 30000 draws, identical ESS estimator): the `rwm` path wins every applied case of the case-study vignettes against Stan (portpirie 56491 vs 47808, mtcars 41301 vs 17982, faithful 33362 vs 8978 effective draws per second) and against the generic `mcmc::metrop` everywhere. Conjugate Gibbs specialists remain ahead on conjugate regressions, as stated in the amendment.
 
 # gpumetropolis 0.4.2
 
-- `gpu_metropolis(method = "de", de_sync = TRUE)` adds the synchronous
-  per-generation Differential Evolution path (path B). The population advances
-  one generation at a time behind a barrier with a double buffer, so every
-  chain's proposal reads the whole previous generation, the canonical DE-MC
-  mixing of ter Braak (2006); the difference pair excludes the proposing
-  chain. This complements the default batched-snapshot path A, whose pool
-  refreshes every `de_every` iterations: path B refreshes it every generation,
-  which helps on curved or strongly correlated targets where a stale pool
-  loses efficiency. The synchronous path runs on the CPU backend in this
-  release; its warmup is trim-only and `proposal_sd` is the fixed jitter base.
+- `gpu_metropolis(method = "de", de_sync = TRUE)` adds the synchronous per-generation Differential Evolution path (path B). The population advances one generation at a time behind a barrier with a double buffer, so every chain's proposal reads the whole previous generation, the canonical DE-MC mixing of ter Braak (2006); the difference pair excludes the proposing chain. This complements the default batched-snapshot path A, whose pool refreshes every `de_every` iterations: path B refreshes it every generation, which helps on curved or strongly correlated targets where a stale pool loses efficiency. The synchronous path runs on the CPU backend in this release; its warmup is trim-only and `proposal_sd` is the fixed jitter base.
 
 # gpumetropolis 0.4.1
 
-- A plotting layer for the joint posterior and the Bayesian decisions.
-  `gpum_pairs(fit, crlb = ...)` draws the marginal posteriors with their
-  highest density intervals on the diagonal and the bivariate posteriors with
-  their credible-region contours off the diagonal, overlaying the Cramer-Rao
-  ellipse when a `gpum_crlb` is supplied, so the convergence region of each
-  parameter pair reads against the information-bound reference.
-  `gpum_region(fit, params)` returns the highest posterior density region of a
-  pair as contour polygons that compose onto any plot with `lines()`, including
-  a scatter of the original data. `gpum_surface(fit, params)` shows the
-  bivariate posterior density as level curves in two dimensions and as a
-  three-dimensional surface with the credible-region contours projected on the
-  floor.
-- Explanatory figures for the hypothesis tools: `plot()` methods for the
-  objects of `gpum_hypothesis()` (the posterior with the hypothesis interval
-  shaded and its probability), `gpum_rope()` (the posterior with the ROPE band,
-  the highest density interval bar and the decision, in the style of Kruschke),
-  `gpum_crlb()` (posterior spread against the Cramer-Rao bound) and
-  `gpum_bayes_factor()` (the two log evidences with the factor on the Jeffreys
-  scale).
-- `gpum_ppc()` and `gpum_density_compare()` add the observed-against-generated
-  check that applied work needs. `gpum_ppc(fit, generate)` draws a posterior
-  predictive sample, with the user supplying the family's one-line simulator
-  since the package does not yet generate from an arbitrary likelihood;
-  `gpum_density_compare(observed, generated)` overlays the observed density and
-  one or more generated densities on a single plot, so a fit can be checked
-  against the data and competing models read off against each other.
-- Three case-study vignettes on real data exercise the whole package end to
-  end. `case_old_faithful` fits a correlated regression and a bimodal mixture
-  to the Old Faithful geyser, covering Differential Evolution, parallel
-  tempering, the Cramer-Rao reference both where it applies and where it
-  declines, the decision verbs and the model-comparison verbs.
-  `case_mtcars` is a model-comparison study on fuel economy, weighing a second
-  predictor by WAIC, LOO and the Bayes factor. `case_portpirie` fits the Gumbel
-  law to annual maximum sea levels, derives the hundred-year return level with
-  its credible interval, and compares the extreme-value law against a Normal.
+- A plotting layer for the joint posterior and the Bayesian decisions. `gpum_pairs(fit, crlb = ...)` draws the marginal posteriors with their highest density intervals on the diagonal and the bivariate posteriors with their credible-region contours off the diagonal, overlaying the Cramer-Rao ellipse when a `gpum_crlb` is supplied, so the convergence region of each parameter pair reads against the information-bound reference. `gpum_region(fit, params)` returns the highest posterior density region of a pair as contour polygons that compose onto any plot with `lines()`, including a scatter of the original data. `gpum_surface(fit, params)` shows the bivariate posterior density as level curves in two dimensions and as a three-dimensional surface with the credible-region contours projected on the floor.
+- Explanatory figures for the hypothesis tools: `plot()` methods for the objects of `gpum_hypothesis()` (the posterior with the hypothesis interval shaded and its probability), `gpum_rope()` (the posterior with the ROPE band, the highest density interval bar and the decision, in the style of Kruschke), `gpum_crlb()` (posterior spread against the Cramer-Rao bound) and `gpum_bayes_factor()` (the two log evidences with the factor on the Jeffreys scale).
+- `gpum_ppc()` and `gpum_density_compare()` add the observed-against-generated check that applied work needs. `gpum_ppc(fit, generate)` draws a posterior predictive sample, with the user supplying the family's one-line simulator since the package does not yet generate from an arbitrary likelihood; `gpum_density_compare(observed, generated)` overlays the observed density and one or more generated densities on a single plot, so a fit can be checked against the data and competing models read off against each other.
+- Three case-study vignettes on real data exercise the whole package end to end. `case_old_faithful` fits a correlated regression and a bimodal mixture to the Old Faithful geyser, covering Differential Evolution, parallel tempering, the Cramer-Rao reference both where it applies and where it declines, the decision verbs and the model-comparison verbs. `case_mtcars` is a model-comparison study on fuel economy, weighing a second predictor by WAIC, LOO and the Bayes factor. `case_portpirie` fits the Gumbel law to annual maximum sea levels, derives the hundred-year return level with its credible interval, and compares the extreme-value law against a Normal.
 
 # gpumetropolis 0.4.0
 
-- `gpu_metropolis(method = "de")` adds Differential Evolution MCMC. The
-  proposal for each chain is the scaled difference of two other chains,
-  `x_c + gamma * (x_a - x_b) + epsilon`, so the proposal aligns with the
-  correlation of the target through the ensemble geometry, with no
-  explicit covariance and no hand tuning of `proposal_sd` (ter Braak
-  2006). The default scale is `gamma = 2.38 / sqrt(2 * n_params)`, the
-  value optimal for an approximately Gaussian target; with probability
-  0.1 each iteration the scale collapses to 1 for an occasional
-  mode-crossing jump. A small per-dimension jitter `de_noise` (default
-  `1e-3` of the running per-chain scale) keeps the chain irreducible
-  when the ensemble collapses onto a subspace. The path needs at least
-  four chains and maps onto the chain axis the package already
-  parallelises.
-- The implementation is host-orchestrated (path A): the difference pool
-  is the population frozen at the start of each batch, refreshed every
-  `de_every` iterations (default `max(n_chains, 10)`), and the kernel
-  draws the difference pairs internally from that snapshot. Because the
-  snapshot is fixed within a batch the chains stay independent during
-  the batch, so the block-per-chain kernel is unchanged in structure;
-  the proposal increment is symmetric, so the acceptance ratio is the
-  density ratio alone. A per-generation synchronous variant ships in 0.4.2 under
-  `de_sync = TRUE`.
-- `gpum_diagnose(fit)` recognises a DE fit: the per-parameter summary
-  covers every chain (there is no cold chain to collapse to), an extra
-  row of panels shows the per-chain acceptance and the ensemble spread
-  per dimension over the batches, and a hint fires when the population
-  spread collapses in any dimension ("Raise de_noise or n_chains").
-- `gpum_crlb(fit, data)` adds an optional Cramer-Rao reference. It forms
-  the observed Fisher information by a central-difference Hessian of the
-  same compiled log-likelihood the sampler used, inverts it to the
-  lower bound on the covariance of an unbiased estimator, and reports it
-  beside the empirical posterior spread. Under the regularity of the
-  Bernstein-von Mises theorem the posterior covariance approaches the
-  inverse Fisher information, so a match is a check that the sampler
-  recovered the information-bound geometry. The bound is a frequentist,
-  asymptotic, prior-free object, and the function refuses to report a
-  number rather than mislead when its assumptions visibly fail: a model
-  with no data term, a largest R-hat above a threshold (multimodal or
-  unconverged), or an observed information that is not positive definite
-  (a non-regular geometry or a boundary). `gpum_diagnose(fit, crlb = ...)`
-  overlays the asymptotic-normal reference on the density panels.
-- A formal Bayesian decision and comparison layer is added. From the draws
-  alone: `gpum_hypothesis(fit, parameter, lower, upper)` gives the posterior
-  probability of an interval or one-sided hypothesis, and
-  `gpum_rope(fit, parameter, rope)` applies the region-of-practical-equivalence
-  rule against the highest density interval `hdi()` (Kruschke 2018). For
-  predictive model comparison without a marginal likelihood:
-  `gpum_waic(fit, data)` (Watanabe 2010) and `gpum_loo(fit, data)`, the latter
-  delegating to the `loo` package for Pareto-smoothed importance sampling
-  (Vehtari, Gelman and Gabry 2017), both backed by a new pointwise
-  log-likelihood path. For the weight of evidence:
-  `gpum_evidence(model, data)` estimates the log marginal likelihood by
-  thermodynamic integration along power posteriors from the prior to the
-  posterior (Gelman and Meng 1998; Friel and Pettitt 2008), and
-  `gpum_bayes_factor(model1, model0, data)` forms the Bayes factor from two
-  evidences. The thermodynamic integration reuses the existing sampler with no
-  kernel change, by raising the compiled likelihood to the rung power in the
-  bytecode. The evidence requires a proper prior and carries the
-  prior-sensitivity caveat of the Jeffreys-Lindley effect, stated in the
-  output. The posterior predictive check and Bayesian p-value are deferred
-  until the package can generate replicated data from an arbitrary likelihood.
+- `gpu_metropolis(method = "de")` adds Differential Evolution MCMC. The proposal for each chain is the scaled difference of two other chains, `x_c + gamma * (x_a - x_b) + epsilon`, so the proposal aligns with the correlation of the target through the ensemble geometry, with no explicit covariance and no hand tuning of `proposal_sd` (ter Braak 2006). The default scale is `gamma = 2.38 / sqrt(2 * n_params)`, the value optimal for an approximately Gaussian target; with probability 0.1 each iteration the scale collapses to 1 for an occasional mode-crossing jump. A small per-dimension jitter `de_noise` (default `1e-3` of the running per-chain scale) keeps the chain irreducible when the ensemble collapses onto a subspace. The path needs at least four chains and maps onto the chain axis the package already parallelises.
+- The implementation is host-orchestrated (path A): the difference pool is the population frozen at the start of each batch, refreshed every `de_every` iterations (default `max(n_chains, 10)`), and the kernel draws the difference pairs internally from that snapshot. Because the snapshot is fixed within a batch the chains stay independent during the batch, so the block-per-chain kernel is unchanged in structure; the proposal increment is symmetric, so the acceptance ratio is the density ratio alone. A per-generation synchronous variant ships in 0.4.2 under `de_sync = TRUE`.
+- `gpum_diagnose(fit)` recognises a DE fit: the per-parameter summary covers every chain (there is no cold chain to collapse to), an extra row of panels shows the per-chain acceptance and the ensemble spread per dimension over the batches, and a hint fires when the population spread collapses in any dimension ("Raise de_noise or n_chains").
+- `gpum_crlb(fit, data)` adds an optional Cramer-Rao reference. It forms the observed Fisher information by a central-difference Hessian of the same compiled log-likelihood the sampler used, inverts it to the lower bound on the covariance of an unbiased estimator, and reports it beside the empirical posterior spread. Under the regularity of the Bernstein-von Mises theorem the posterior covariance approaches the inverse Fisher information, so a match is a check that the sampler recovered the information-bound geometry. The bound is a frequentist, asymptotic, prior-free object, and the function refuses to report a number rather than mislead when its assumptions visibly fail: a model with no data term, a largest R-hat above a threshold (multimodal or unconverged), or an observed information that is not positive definite (a non-regular geometry or a boundary). `gpum_diagnose(fit, crlb = ...)` overlays the asymptotic-normal reference on the density panels.
+- A formal Bayesian decision and comparison layer is added. From the draws alone: `gpum_hypothesis(fit, parameter, lower, upper)` gives the posterior probability of an interval or one-sided hypothesis, and `gpum_rope(fit, parameter, rope)` applies the region-of-practical-equivalence rule against the highest density interval `hdi()` (Kruschke 2018). For predictive model comparison without a marginal likelihood: `gpum_waic(fit, data)` (Watanabe 2010) and `gpum_loo(fit, data)`, the latter delegating to the `loo` package for Pareto-smoothed importance sampling (Vehtari, Gelman and Gabry 2017), both backed by a new pointwise log-likelihood path. For the weight of evidence: `gpum_evidence(model, data)` estimates the log marginal likelihood by thermodynamic integration along power posteriors from the prior to the posterior (Gelman and Meng 1998; Friel and Pettitt 2008), and `gpum_bayes_factor(model1, model0, data)` forms the Bayes factor from two evidences. The thermodynamic integration reuses the existing sampler with no kernel change, by raising the compiled likelihood to the rung power in the bytecode. The evidence requires a proper prior and carries the prior-sensitivity caveat of the Jeffreys-Lindley effect, stated in the output. The posterior predictive check and Bayesian p-value are deferred until the package can generate replicated data from an arbitrary likelihood.
 
 # gpumetropolis 0.3.0
 
-- `gpu_metropolis(method = "pt")` adds parallel tempering. Each chain
-  runs at its own temperature on the same target; between batches a
-  swap step proposes exchanges of states between adjacent temperatures,
-  with the textbook acceptance ratio
-  `exp((log pi(x_{c+1}) - log pi(x_c)) * (1/T_c - 1/T_{c+1}))`. The cold
-  chain (`T = 1`) provides the posterior samples; the hot chains feed it
-  through swaps. Default ladder is geometric, `T = 1` to `t_max = 10`
-  spaced as `beta^{(c-1)}`. Default `swap_every = max(n_chains, 10)`.
-  Adaptation continues to work per chain inside PT: each chain's
-  proposal scale adapts to its own tempered geometry during warmup.
-- Kernel changes for PT: per-chain `temperatures` buffer threaded
-  through the CPU-native and CubeCL kernels, with the acceptance ratio
-  divided by `T_c`; the kernel also returns the raw log-posterior at
-  each chain's final state so the host swap step can compare densities
-  across chains without recomputing.
-- `gpum_diagnose(fit)` recognises a PT fit: the convergence summary
-  collapses to the cold chain, an extra row of panels shows swap
-  acceptance per pair over batches with the 0.234 asymptotic target as
-  a reference, and a hint fires when any adjacent pair averages below
-  10% swap acceptance ("Consider a denser temperature ladder").
+- `gpu_metropolis(method = "pt")` adds parallel tempering. Each chain runs at its own temperature on the same target; between batches a swap step proposes exchanges of states between adjacent temperatures, with the textbook acceptance ratio `exp((log pi(x_{c+1}) - log pi(x_c)) * (1/T_c - 1/T_{c+1}))`. The cold chain (`T = 1`) provides the posterior samples; the hot chains feed it through swaps. Default ladder is geometric, `T = 1` to `t_max = 10` spaced as `beta^{(c-1)}`. Default `swap_every = max(n_chains, 10)`. Adaptation continues to work per chain inside PT: each chain's proposal scale adapts to its own tempered geometry during warmup.
+- Kernel changes for PT: per-chain `temperatures` buffer threaded through the CPU-native and CubeCL kernels, with the acceptance ratio divided by `T_c`; the kernel also returns the raw log-posterior at each chain's final state so the host swap step can compare densities across chains without recomputing.
+- `gpum_diagnose(fit)` recognises a PT fit: the convergence summary collapses to the cold chain, an extra row of panels shows swap acceptance per pair over batches with the 0.234 asymptotic target as a reference, and a hint fires when any adjacent pair averages below 10% swap acceptance ("Consider a denser temperature ladder").
 
 # gpumetropolis 0.2.0
 
-- **`gpu_metropolis(backend = "auto")` is now the default.** The selector
-  picks `"cuda"` when its feature is compiled in, then `"vulkan"`, and
-  falls back to `"cpu"` with a one-shot per-session notice pointing at
-  the source-install recipe.
-- **Adaptive warmup, on by default.** When `adapt = TRUE` and `warmup
-  > 0`, the warmup runs in batches; between batches, Welford updates the
-  per-chain running variance per dimension while Robbins-Monro updates
-  a per-chain scalar toward the asymptotic optimum acceptance (0.234 in
-  `d >= 2`, 0.44 in `d = 1`; Roberts-Gelman-Gilks 1997). Adaptation
-  stops cleanly at the warmup boundary, so the sampling phase is
-  stationary. `proposal_sd` becomes a seed for the warmup rather than a
-  knob to sintonise; `adapt = FALSE` keeps the trim-only warmup of
-  0.1.x. `proposal_sd` also accepts an `n_chains` by `n_params` matrix
-  for the explicit per-chain initialisation.
-- **`gpum_diagnose(fit)`: one-call diagnostic.** Prints a per-parameter
-  table (mean, sd, 2.5%, 50%, 97.5% quantiles, split R-hat, ESS, MCSE)
-  and a convergence verdict from the canonical thresholds (R-hat < 1.01
-  and ESS >= 400). When `plot = TRUE`, opens a multi-panel plot per
-  parameter (trace, pooled density, running mean per chain, pooled
-  ACF), plus, when the fit is adaptive, an extra row showing the
-  acceptance rate per chain by warmup batch with the asymptotic
-  optimum as a reference.
-- The fit object now carries `fit$adaptation` when the warmup was
-  adaptive, with `final_proposal_sd`, `final_scales`, `n_batches`,
-  `batch_sizes` and `accept_history`.
+- **`gpu_metropolis(backend = "auto")` is now the default.** The selector picks `"cuda"` when its feature is compiled in, then `"vulkan"`, and falls back to `"cpu"` with a one-shot per-session notice pointing at the source-install recipe.
+- **Adaptive warmup, on by default.** When `adapt = TRUE` and `warmup > 0`, the warmup runs in batches; between batches, Welford updates the per-chain running variance per dimension while Robbins-Monro updates a per-chain scalar toward the asymptotic optimum acceptance (0.234 in `d >= 2`, 0.44 in `d = 1`; Roberts-Gelman-Gilks 1997). Adaptation stops cleanly at the warmup boundary, so the sampling phase is stationary. `proposal_sd` becomes a seed for the warmup rather than a knob to sintonise; `adapt = FALSE` keeps the trim-only warmup of 0.1.x. `proposal_sd` also accepts an `n_chains` by `n_params` matrix for the explicit per-chain initialisation.
+- **`gpum_diagnose(fit)`: one-call diagnostic.** Prints a per-parameter table (mean, sd, 2.5%, 50%, 97.5% quantiles, split R-hat, ESS, MCSE) and a convergence verdict from the canonical thresholds (R-hat < 1.01 and ESS >= 400). When `plot = TRUE`, opens a multi-panel plot per parameter (trace, pooled density, running mean per chain, pooled ACF), plus, when the fit is adaptive, an extra row showing the acceptance rate per chain by warmup batch with the asymptotic optimum as a reference.
+- The fit object now carries `fit$adaptation` when the warmup was adaptive, with `final_proposal_sd`, `final_scales`, `n_batches`, `batch_sizes` and `accept_history`.
 
 # gpumetropolis 0.1.3
 
-- On attach, the package now notifies the user when a newer version is
-  available on the R-universe channel of the maintainer. The check is
-  active only in interactive sessions, silent on any network or parse
-  failure, and opt-out via the `GPUMETROPOLIS_NO_VERSION_CHECK`
-  environment variable. The hint includes the source-install command, so
-  the auto-detected GPU backend kicks in on the upgrade.
+- On attach, the package now notifies the user when a newer version is available on the R-universe channel of the maintainer. The check is active only in interactive sessions, silent on any network or parse failure, and opt-out via the `GPUMETROPOLIS_NO_VERSION_CHECK` environment variable. The hint includes the source-install command, so the auto-detected GPU backend kicks in on the upgrade.
 
 # gpumetropolis 0.1.2
 
-- `gpu_metropolis()` now discards a warmup portion before returning. The
-  new `warmup` argument defaults to `floor(n_iter / 2)`, following the
-  convention of Stan and nimble, so `fit$draws` is post-warmup by default
-  and is suitable for direct plotting and posterior summaries. Set
-  `warmup = 0` to keep every iteration, useful for trace plots that show
-  the burn-in trajectory. The trim is plain; an adaptive warmup that also
-  tunes the proposal during the burn-in is the next release.
-- The `gpum_fit` object now carries `n_iter` (kept), `n_iter_total` (raw)
-  and `warmup` so the raw and discarded counts are recoverable.
+- `gpu_metropolis()` now discards a warmup portion before returning. The new `warmup` argument defaults to `floor(n_iter / 2)`, following the convention of Stan and nimble, so `fit$draws` is post-warmup by default and is suitable for direct plotting and posterior summaries. Set `warmup = 0` to keep every iteration, useful for trace plots that show the burn-in trajectory. The trim is plain; an adaptive warmup that also tunes the proposal during the burn-in is the next release.
+- The `gpum_fit` object now carries `n_iter` (kept), `n_iter_total` (raw) and `warmup` so the raw and discarded counts are recoverable.
 
 # gpumetropolis 0.1.1
 
-- Auto-detect GPU backends at install time. The `configure` step probes the
-  build host for the CUDA toolkit (`nvcc`) and the Vulkan tools
-  (`vulkaninfo`) and adds the matching Cargo features to the build, so a
-  source install on a machine with the toolchains present produces a binary
-  that exposes the GPU backends without the user passing any flag. Hosts
-  with no GPU toolchain build CPU-only, unchanged. Override with the
-  `GPUMETROPOLIS_BACKENDS`, `GPUMETROPOLIS_CUDA` and `GPUMETROPOLIS_VULKAN`
-  environment variables.
+- Auto-detect GPU backends at install time. The `configure` step probes the build host for the CUDA toolkit (`nvcc`) and the Vulkan tools (`vulkaninfo`) and adds the matching Cargo features to the build, so a source install on a machine with the toolchains present produces a binary that exposes the GPU backends without the user passing any flag. Hosts with no GPU toolchain build CPU-only, unchanged. Override with the `GPUMETROPOLIS_BACKENDS`, `GPUMETROPOLIS_CUDA` and `GPUMETROPOLIS_VULKAN` environment variables.
 
 # gpumetropolis 0.1.0
 
-First release. The package is distributed through R-universe as a focused
-generic sampler.
+First release. The package is distributed through R-universe as a focused generic sampler.
 
 ## Sampler
 
-- `gpum_model()` declares a model from a log-likelihood and an optional
-  log-prior written as one-sided formulas, in a restricted operation set
-  (`+`, `-`, `*`, `/`, `^`, unary `-`, `exp`, `log`, `sqrt`). The formulas are
-  compiled to a stack-machine bytecode.
-- `gpu_metropolis()` runs a batched random-walk Metropolis sampler over the
-  compiled model. One kernel source runs on three backends: `cpu`, `cuda` and
-  `vulkan`. `backend = "auto"` selects the CPU for few chains and CUDA for
-  many.
-- The GPU kernel assigns one block of threads to each chain; the threads of a
-  block share the sum over observations through a tree reduction. The CPU
-  backend is native Rust, with the log-likelihood JIT-compiled to machine code
-  and worked in double precision.
-- Each chain advances a counter-based stream from a triple32 hash. The `seed`
-  argument is itself hashed before the chain offset is applied, so runs with
-  consecutive integer seeds get independent streams rather than streams that
-  overlap by a one-counter shift.
+- `gpum_model()` declares a model from a log-likelihood and an optional log-prior written as one-sided formulas, in a restricted operation set (`+`, `-`, `*`, `/`, `^`, unary `-`, `exp`, `log`, `sqrt`). The formulas are compiled to a stack-machine bytecode.
+- `gpu_metropolis()` runs a batched random-walk Metropolis sampler over the compiled model. One kernel source runs on three backends: `cpu`, `cuda` and `vulkan`. `backend = "auto"` selects the CPU for few chains and CUDA for many.
+- The GPU kernel assigns one block of threads to each chain; the threads of a block share the sum over observations through a tree reduction. The CPU backend is native Rust, with the log-likelihood JIT-compiled to machine code and worked in double precision.
+- Each chain advances a counter-based stream from a triple32 hash. The `seed` argument is itself hashed before the chain offset is applied, so runs with consecutive integer seeds get independent streams rather than streams that overlap by a one-counter shift.
 
 ## Diagnostics
 
 - `rhat()`, the split potential scale reduction factor.
 - `ess()`, the effective sample size by Geyer's initial positive sequence.
-- `ks_equivalence()`, a two-sample Kolmogorov-Smirnov check of distributional
-  equivalence, thinned to the effective sample size.
-- `gaussian_mean_posterior()`, the closed-form posterior used to check
-  parameter recovery.
+- `ks_equivalence()`, a two-sample Kolmogorov-Smirnov check of distributional equivalence, thinned to the effective sample size.
+- `gaussian_mean_posterior()`, the closed-form posterior used to check parameter recovery.
