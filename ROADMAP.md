@@ -85,11 +85,18 @@ vignette away and needs no engine change.
 The path forward, in dimension order:
 
 - Bivariate copula workflow (`gpum_copula(data, family)`): Gumbel, Clayton,
-  Frank and Gaussian families on two-column data. In reach with the current
-  scalar DSL.
+  Frank and Gaussian families on two-column data, in reach with the current
+  scalar DSL. Family auto-selection is part of this workflow rather than a
+  later step: `family = "auto"` fits every candidate and returns the one
+  preferred by predictive comparison, with the full comparison table, since
+  the pseudo-observations are exchangeable and admit WAIC and PSIS-LOO. The
+  choice of family is a hypothesis about tail behaviour, so selecting it
+  belongs with the fit, not after it. Decision recorded 2026-08-05.
 - Per-column marginal auto-selection: type detection on a data.frame,
   candidate-family search per column, MCMC fit per marginal. Each column
-  produces a fitted CDF.
+  produces a fitted CDF. This is the marginal counterpart of the copula
+  family selection above, moved to its own release only because the type
+  detection and the per-column search are a separate body of work.
 - Vine copula for `d > 2`: pair-copula decomposition (Aas, Czado, Frigessi
   and Bakken 2009) with structure selection (Dissmann, Brechmann, Czado and
   Kurowicka 2013). The vine decomposes a `d`-dimensional dependence into
@@ -185,7 +192,8 @@ discrete deliverable, validated before the next opens.
   and the `case_nile_timeseries` vignette exercises the whole layer on
   the Nile flow with the 1898 level shift. Declared boundary: latent
   recursions and matrix-coupled likelihoods wait for the matrix-DSL tier.
-- 0.6.0: bivariate copula workflow with the four common families.
+- 0.6.0: bivariate copula workflow with the four common families and
+  automatic family selection by predictive comparison.
 - 0.7.0: per-column marginal auto-selection.
 - 0.8.0: vine copula for `d > 2`.
 - 0.9.0: synthesis, `generate(fit, n)`.
@@ -271,19 +279,57 @@ package occupies: **MCMC plus vendor-agnostic GPU portability plus
 copula-driven synthesis**. Two candidate directions, to be decided when
 the 1.0.0 release lands:
 
-- **HMC and NUTS** as a parallel sampler in the package, which would
-  reopen decision 3 of `BRIEFING.md` (automatic differentiation). The
-  cost is the AD machinery on the bytecode and the kernel; the benefit
-  is matching `Stan` on differentiable targets while keeping the
-  many-chains GPU axis.
-- **Hold the no-AD line and double down on the niche**: make the copula
+- **HMC and NUTS** as a parallel sampler in the package. The
+  reverse-mode automatic differentiation of the bytecode already landed
+  in v0.5.2 on the CPU (it drives `method = "mala"`), so the remaining
+  cost is the gradient kernel on the GPU and the NUTS integrator itself;
+  the benefit is matching `Stan` on differentiable targets while keeping
+  the many-chains GPU axis.
+- **Hold the line and double down on the niche**: make the copula
   synthesis path through vines and parallel tempering the best
   implementation in any language, on GPU, with explicit support for
   large `d` through vine decomposition and large `n` through the
   data-parallel kernel. The state of the art here is currently
   scattered across small specialised packages; a single coherent path
   has room.
+- **Copula-as-interlingua for controllable synthetic text (research
+  direction, novelty unconfirmed).** Extend the copula synthesis engine
+  from numeric datasets to text corpora for LLM training and evaluation.
+  The copula is the pivot representation: text is mapped to a vector of
+  interpretable attributes, the copula (or the dataset-level plus
+  per-entry hierarchical copula) is estimated on the pseudo-observations,
+  synthetic attribute vectors are sampled preserving that copula, and a
+  fixed LLM is conditioned to realise them, with a consistency check that
+  closes the loop. The check plus resampling is exactly an ABC-MCMC step
+  with the LLM as the simulator, so the package's Metropolis engine is
+  the corrector; the discrepancy for copula fidelity must live in the
+  rank space (the copula is invariant to monotone marginal transforms,
+  the embedding geometry is not), while embedding distance serves the
+  separate in-distribution and novelty checks. The trainable object is
+  the copula-to-instruction bridge, a small conditional prompt policy,
+  optimised by expected rank-space distance over all generated samples
+  (not the accepted subset, which biases toward the easy region) through
+  the same Robbins-Monro stochastic approximation the adaptive warmup
+  already runs. Known limits to state up front: the guarantee is a
+  projection onto the measured attributes, with the residual filled by
+  the LLM prior; discrete attributes break Sklar uniqueness (Genest and
+  Neslehova 2007); optimisation weaponises Goodhart on the extractor, so
+  held-out and ensembled extractors are mandatory; there is an
+  irreducible tolerance floor `epsilon*` from the LLM stochasticity and
+  the information bottleneck. First experiment: estimate `epsilon*`
+  empirically for a fixed extractor and generator. Scope boundary: the
+  package owns the statistical core (copula estimation, vine, hierarchical
+  copula, synthesis) and the ABC/Metropolis corrector; the text encoder
+  and the LLM generator are an external companion stack, consistent with
+  the recorded boundary that neural generative models are not built on
+  this engine. Novelty is not established: the components are mature or
+  recently published (copula synthesis for tabular data; the LLM as an
+  ABC simulator, arXiv 2509.19375, 2025; distance-based prompt-policy
+  calibration against reward over-optimisation, arXiv 2404.19409, 2024),
+  and only the specific assembly and its theory appear unclaimed. A
+  systematic literature review, not the informal search of 2026-08-05,
+  is a gate before any contribution claim. Direction recorded 2026-08-05.
 
-The concrete choice between these two directions is recorded as a
+The concrete choice between these directions is recorded as a
 post-1.0.0 decision, after 2026-11-02. The interim is the v0.4.0
 through v0.9.0 march already on the calendar.
