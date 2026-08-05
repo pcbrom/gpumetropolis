@@ -97,13 +97,31 @@ The path forward, in dimension order:
   produces a fitted CDF. This is the marginal counterpart of the copula
   family selection above, moved to its own release only because the type
   detection and the per-column search are a separate body of work.
-- Vine copula for `d > 2`: pair-copula decomposition (Aas, Czado, Frigessi
-  and Bakken 2009) with structure selection (Dissmann, Brechmann, Czado and
-  Kurowicka 2013). The vine decomposes a `d`-dimensional dependence into
-  `d(d-1)/2` bivariate copulas, each tractable in the current DSL. This is
-  the path that sidesteps the full vector DSL of Tier 5.
-- Synthesis: `generate(fit, n)` samples from the fitted vine, inverts each
-  marginal CDF and returns the synthetic data.frame.
+- First-order Markov copula for serial dependence: model the dependence
+  between consecutive observations of a stationary series with a copula
+  rather than a linear autoregression, capturing the non-linear and
+  tail serial dependence a linear AR misses (Chen and Fan 2006). Reachable
+  now, since the pieces exist: the lagged design of `gpum_ts_model()`
+  supplies the pair `(y_t, y_{t-1})`, one stationary marginal from
+  `gpum_fit_catalog()` transforms both coordinates to the unit square, and
+  `gpum_copula()` fits the family. The release wires them into one verb and
+  ships the text and visual diagnostics.
+- Vine copula for `d > 2`, cross-sectional and serial: pair-copula
+  decomposition (Aas, Czado, Frigessi and Bakken 2009) with structure
+  selection (Dissmann, Brechmann, Czado and Kurowicka 2013). The vine
+  decomposes a `d`-dimensional dependence into `d(d-1)/2` bivariate copulas,
+  each tractable in the current DSL. The same machinery, applied to lags
+  rather than to a cross-section and constrained to translation-invariant
+  pair-copulas, gives the stationary D-vine copula for serial dependence of
+  order `p` (Beare and Seo 2015; Smith 2015; Nagler, Krueger and Min 2022),
+  which is delivered in this release alongside the cross-sectional vine.
+  This is the path that sidesteps the full vector DSL of Tier 5.
+- Synthesis: `generate(fit, n)` samples from the fitted vine or D-vine,
+  inverts each marginal CDF and returns synthetic records; for a serial
+  D-vine it returns a synthetic trajectory of the series, not independent
+  rows. Copula-GARCH and the S-vine with time-varying marginals, which need
+  a latent recursion in the marginal filter, stay outside this arc with the
+  other latent-recursion models, revisited with the matrix-DSL direction.
 
 The DSL expansion of Tier 5 leaves the critical path of the application:
 vines reduce dependence to pairs, and pairs fit in the current DSL. Tier 5
@@ -201,8 +219,20 @@ discrete deliverable, validated before the next opens.
   transform. Adds the `lgamma` DSL operation across all four backends
   (value, JIT, reverse-mode gradient, GPU). Text and visual diagnostics;
   case-study vignette `case_marginal` closing the full Sklar workflow.
-- 0.8.0: vine copula for `d > 2`.
-- 0.9.0: synthesis, `generate(fit, n)`.
+- 0.7.1: first-order Markov copula for serial dependence, `gpum_ts_copula()`.
+  Models the dependence between consecutive observations of a stationary
+  series with a copula instead of a linear autoregression, capturing
+  non-linear and tail serial dependence (Chen and Fan 2006). Wires the
+  existing pieces (the lagged design of `gpum_ts_model()`, one stationary
+  marginal from `gpum_fit_catalog()`, and `gpum_copula()`) into one verb,
+  with the text and visual diagnostics.
+- 0.8.0: vine copula for `d > 2`, cross-sectional and serial. The
+  pair-copula decomposition for a `d`-dimensional cross-section, plus the
+  translation-invariant stationary D-vine for serial dependence of order
+  `p` (Beare and Seo 2015; Smith 2015; Nagler, Krueger and Min 2022),
+  delivered together since they share the vine machinery.
+- 0.9.0: synthesis, `generate(fit, n)`. Synthetic records from a
+  cross-sectional fit, and a synthetic trajectory from a serial D-vine.
 - 1.0.0: documentation and API polish as the reference release.
 
 Tier 2 (fused kernels for common likelihoods) and Tier 5 (vector and matrix

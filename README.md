@@ -396,8 +396,10 @@ automatic differentiation of the model bytecode, JIT-compiled beside the
 density, winning threefold against Stan on a d = 21 logistic regression
 (amendment v1.2). The application trajectory follows with the
 bivariate copula
-workflow (v0.6.0), per-column marginal auto-selection (v0.7.0), vine copula
-for higher dimension (v0.8.0) and synthesis
+workflow (v0.6.0), per-column marginal auto-selection (v0.7.0), a first-order
+Markov copula for serial dependence (v0.7.1), the vine copula for higher
+dimension together with the stationary D-vine for serial dependence of order
+`p` (v0.8.0) and synthesis, including synthetic time-series trajectories
 (v0.9.0). The distribution catalogue that drives the marginal auto-selection
 is specified in
 [`CATALOG_DESIGN.md`](https://github.com/pcbrom/gpumetropolis/blob/main/CATALOG_DESIGN.md).
