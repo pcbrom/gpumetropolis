@@ -304,7 +304,7 @@ overlap heavily.
 have `k!` symmetric modes from permuting the component labels. The
 catalogue mitigates by enforcing `mu_1 <= mu_2 <= ... <= mu_k` at the
 post-processing stage, which is the simplest non-arbitrary
-identifiability constraint. Per-chain PT is essential here: the
+identifiability constraint. Per-chain PT is required here: the
 posterior is genuinely multimodal in the label dimension, and AM
 diagonal alone cannot cross it.
 
