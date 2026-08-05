@@ -21,10 +21,12 @@
   The CPU path is validated against R: the value matches to 1e-15 and the
   gradient to 1e-9. The GPU kernel `lgamma` (a Stirling approximation in
   f32) is runtime-verified on an RTX 5090 (Blackwell, compute capability
-  12.0) through CUDA 13.0: the CUDA backend matches the CPU backend to
-  Monte-Carlo noise on the normal, gamma and beta models (mean absolute
-  difference below 1e-4), and delivers an 8x speedup at 2048 chains on a
-  gamma target with N = 8000.
+  12.0) on both GPU engines: the CUDA backend (through CUDA 13.0) and the
+  Vulkan backend (through wgpu) each match the CPU backend to Monte-Carlo
+  noise on the normal, gamma and beta models (mean absolute difference
+  below 1.6e-4), confirming the single portable kernel produces the same
+  inference across CPU, CUDA and Vulkan. CUDA delivers an 8x speedup at
+  2048 chains on a gamma target with N = 8000.
 - The bimodal column is fit as a two-component Gaussian mixture with its
   components initialised at the data quartiles and their means held by a
   data-anchored prior, which removes the empty-component degeneracy that
