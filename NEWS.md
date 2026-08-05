@@ -1,3 +1,55 @@
+# gpumetropolis 0.7.0
+
+- Automatic marginal distribution selection. `gpum_fit_catalog(data)` takes
+  a numeric column, detects its support and modality, fits every eligible
+  parametric family with the sampler, and ranks them by predictive
+  comparison (WAIC by default, PSIS-LOO optional). The winner's fitted
+  cumulative distribution is the probability-integral transform that feeds
+  `gpum_copula()`, so the explicit marginals and the copula together model
+  the full joint distribution, both halves of Sklar's theorem.
+- Ten families ship in the catalogue: on the real line normal, Student-t,
+  logistic and Laplace; on the positive half-line gamma, lognormal, Weibull
+  and exponential; on the unit interval beta; and the two-component Gaussian
+  mixture for bimodal columns. Every family is written in an unconstrained
+  parametrisation (log of a positive parameter), so the sampler never
+  proposes an invalid scale or shape, and every log-density carries its
+  normalising constant so WAIC compares families on the same scale.
+- New DSL operation `lgamma`, added to the interpreter, the cranelift JIT,
+  the reverse-mode automatic differentiation (with its derivative digamma)
+  and the GPU kernel. Five families (gamma, Student-t, beta among the
+  shipped ones) need the log-gamma of a shape parameter in their density.
+  The CPU path is validated against R: the value matches to 1e-15 and the
+  gradient to 1e-9. The GPU kernel `lgamma` (a Stirling approximation in
+  f32) compiles but is not runtime-verified in this release, since the
+  marginal catalogue fits on the CPU backend (the mixture uses MALA, which
+  is CPU-only); the GPU form is provided for parity and awaits a functional
+  GPU for numerical validation.
+- The bimodal column is fit as a two-component Gaussian mixture with its
+  components initialised at the data quartiles and their means held by a
+  data-anchored prior, which removes the empty-component degeneracy that
+  otherwise sends a mean to infinity. With the components separated the fit
+  uses MALA, which mixes more reliably than a temperature ladder on this
+  low-dimensional mixture (measured R-hat near 1.00), and the draws are
+  relabeled so the lower-location component is reported first.
+- The object carries a text diagnostic (`print`: support and modality
+  verdict, selected family, convergence R-hat and the Kolmogorov-Smirnov
+  distance of the fitted CDF, and the ranking table) and a visual one
+  (`plot`: fitted density over the histogram, the QQ plot, and the WAIC
+  ranking). `marginal_cdf()` returns the fitted probability-integral
+  transform for the copula workflow.
+- New case-study vignette `case_marginal`: the Old Faithful waiting times,
+  where the catalogue selects the mixture and recovers the two modes, and
+  the full Sklar workflow on the `airquality` pair, each column given its
+  own selected marginal before the copula binds them.
+- Actionable backend errors. A GPU launch failure is caught and the opaque
+  runtime error is followed by the probable cause and the fix. In
+  particular, a CUDA kernel that cannot compile for a newer GPU (an
+  RTX 50-series Blackwell GPU, compute capability 12.0, needs CUDA 12.8 or
+  newer) now reports that the toolkit is older than the GPU requires and
+  suggests rebuilding against a matching toolkit or running with
+  `backend = "vulkan"` or `backend = "cpu"`, instead of surfacing a bare
+  `nvrtc: invalid value for --gpu-architecture` string.
+
 # gpumetropolis 0.6.0
 
 - The bivariate copula workflow. `gpum_copula(data, family)` fits a copula

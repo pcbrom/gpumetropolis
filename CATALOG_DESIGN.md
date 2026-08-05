@@ -1,7 +1,7 @@
 # Distribution catalogue for the auto-fit pipeline
 
-Specification of the distribution catalogue that drives the v0.6.0
-marginal auto-selection and the v0.8.0 synthesis. The catalogue is the
+Specification of the distribution catalogue that drives the v0.7.0
+marginal auto-selection and the v0.9.0 synthesis. The catalogue is the
 inventory that `gpum_fit_catalog(data, ...)` consults to propose and
 rank candidate models for a column of data; the present document fixes
 each distribution's parametrisation, its `gpum_loglik` in the DSL, the
@@ -22,15 +22,15 @@ The catalogue is organised in three tiers. Tier A covers unimodal
 parametric families chosen by support; Tier B covers the multimodal
 case via finite mixtures of any pair of Tier A; Tier C lists discrete
 families. Multivariate and matrix families enter only with the vector
-DSL of the deferred Tier 5 and are not part of the v0.6.0 scope.
+DSL of the deferred Tier 5 and are not part of the v0.7.0 scope.
 
 ## DSL prerequisite: `lgamma`
 
 Five Tier A families (Gamma, Beta, Weibull, Inverse Gamma, Generalized
 Gamma) need `log(Gamma(.))` in the log-density when shape is a
-parameter. The 0.5.0 release adds one operation to the DSL bytecode,
+parameter. The 0.7.0 release adds one operation to the DSL bytecode,
 `lgamma`, mapped to `f64::ln_gamma` on the CPU backend and to a
-custom CubeCL implementation on the GPU backends, before the 0.6.0
+custom CubeCL implementation on the GPU backends, before the 0.7.0
 catalogue work begins. The constants in front of `lgamma` are folded
 at compile time and do not enlarge the instruction count.
 
@@ -354,15 +354,28 @@ bimodal margins). Multimodality is a concern only for this layer, the
 explicit marginal fit, and the routing is fixed here so it is not reopened
 during implementation.
 
-- **Sampler.** A marginal flagged multimodal by the joint verdict is fit
-  with `method = "pt"`, the parallel tempering already in the package since
-  v0.3.0. The cold chain crosses the modes that a single random walk cannot,
-  the same mechanism validated on the bimodal M2 (amendment v0.9 of
-  `EXPERIMENT_PROTOCOL.md`, vignette `m2_parallel_tempering`). MALA is not a
-  substitute here: the gradient path mixes within a mode, not across a
-  barrier between modes.
-- **Relabeling.** Parallel tempering removes the barrier but not the label
-  symmetry, so the raw draws still switch component identities. The
+- **Sampler.** A marginal flagged multimodal is fit as a two-component
+  mixture whose components are initialised at the lower and upper data
+  quartiles and held there by the anchored prior below. With the components
+  already separated, the only multimodality left is the label symmetry,
+  which the relabeling resolves; there is then no barrier to cross, and
+  within-basin MALA mixes more reliably than a temperature ladder (measured
+  R-hat near 1.00 against 1.4 to 1.8 for parallel tempering on the same
+  bimodal data at equal cost). The v0.7.0 implementation therefore fits the
+  two-component mixture with MALA and mode-separated initialisation.
+  Parallel tempering, in the package since v0.3.0 and validated on the
+  bimodal M2 (amendment v0.9 of `EXPERIMENT_PROTOCOL.md`, vignette
+  `m2_parallel_tempering`), stays the tool for a mixture whose modes the
+  initialisation cannot separate, and for the higher-order mixtures whose
+  basins overlap; that path is revisited when the three-component family
+  enters the catalogue.
+- **Anchored means.** The component means carry a data-anchored prior
+  (centred at the data mean, scaled to a few standard deviations); without
+  it an emptied component leaves its mean unidentified and it drifts to
+  infinity, the classic mixture degeneracy. The anchor removes the drift
+  while staying weak enough for the modes to separate.
+- **Relabeling.** The mode-separated fit still admits the label symmetry, so
+  the draws can switch component identities. The
   post-processing orders the components at every draw, ascending in the
   location parameter (`mu`), with the scale parameter as the tie-breaker
   when two locations coincide, generalising the two-component `mu1 < mu2`

@@ -1,3 +1,51 @@
+# Translate a low-level backend failure into an actionable message. The GPU
+# runtime reports its problems as opaque Rust errors (kernel launch failed,
+# server unhealthy, invalid gpu-architecture); the sampler catches these and
+# adds the probable cause and the fix, so the user is not left decoding a
+# compiler string. The original error is preserved above the hint.
+.gpum_backend_guard <- function(expr, backend) {
+  withCallingHandlers(
+    expr,
+    error = function(e) {
+      if (identical(backend, "cpu")) return(invisible())
+      msg <- conditionMessage(e)
+      hint <- if (grepl("gpu-architecture|--arch|invalid value for",
+                        msg, ignore.case = TRUE)) {
+        paste0(
+          "the CUDA toolkit that built this package is older than the GPU ",
+          "requires. A recent GPU (for example an RTX 50-series, Blackwell, ",
+          "compute capability 12.0) needs CUDA 12.8 or newer to compile the ",
+          "kernel. Rebuild the package against a matching CUDA toolkit, or ",
+          "run with backend = \"vulkan\" (no CUDA toolkit needed) or ",
+          "backend = \"cpu\"."
+        )
+      } else if (grepl("out of memory|OutOfMemory|OOM", msg,
+                       ignore.case = TRUE)) {
+        paste0(
+          "the GPU ran out of memory. Reduce `n_chains` or `n_iter`, or run ",
+          "on backend = \"cpu\"."
+        )
+      } else if (grepl("ServerUnhealthy|Launch|kernel|device|driver",
+                       msg, ignore.case = TRUE)) {
+        paste0(
+          "the ", backend, " backend failed to launch the kernel. Check that ",
+          "the GPU driver and runtime are installed and current; then retry, ",
+          "or run with backend = \"cpu\" to bypass the GPU."
+        )
+      } else {
+        NULL
+      }
+      if (!is.null(hint)) {
+        stop(structure(
+          class = c("gpum_backend_error", "error", "condition"),
+          list(message = paste0(msg, "\n\ngpumetropolis: ", hint),
+               call = NULL)
+        ))
+      }
+    }
+  )
+}
+
 # Generic user-facing API of gpumetropolis.
 #
 # The user declares a model with `gpum_model()`, giving the log-likelihood and
@@ -332,7 +380,7 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
                         temperatures_flat = rep(1.0, n_chains),
                         proposal_mode = 0L, gamma = 0, de_noise = 0,
                         proposal_l = numeric(0)) {
-    rust_gpu_metropolis(
+    .gpum_backend_guard(rust_gpu_metropolis(
       model$loglik$code, model$loglik$consts, np,
       as.numeric(data_flat), model$n_cols, n_obs,
       model$prior$code, model$prior$consts,
@@ -341,7 +389,7 @@ gpu_metropolis <- function(model, data = NULL, init = NULL, proposal_sd = 0.1,
       as.integer(n_iter), as.numeric(seed), backend,
       as.integer(proposal_mode), as.numeric(gamma), as.numeric(de_noise),
       as.numeric(proposal_l)
-    )
+    ), backend = backend)
   }
 
   if (identical(method, "pt")) {

@@ -1,0 +1,131 @@
+---
+title: "Case study: automatic marginal selection and the full Sklar workflow"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Case study: automatic marginal selection and the full Sklar workflow}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>",
+                      fig.width = 7, fig.height = 4.5)
+```
+
+Sklar's theorem factors a joint distribution into its marginals and a
+copula. The copula vignette handled the dependence half with the rank
+transform, which ignores the marginal shapes. This one handles the other
+half: fitting an explicit parametric distribution to each column, chosen
+automatically, and then joining the two halves. The result is a full
+probabilistic model of the joint distribution, with named marginals and a
+named copula, the foundation for the synthesis of a later release.
+
+```{r}
+library(gpumetropolis)
+```
+
+## 1. One column, many candidate shapes
+
+`gpum_fit_catalog()` takes a numeric column, detects its support and its
+modality, fits every eligible parametric family with the sampler, and
+ranks them by predictive comparison. Take the waiting times of the Old
+Faithful geyser, a positive and visibly non-Gaussian variable.
+
+```{r}
+y <- faithful$waiting
+result <- gpum_fit_catalog(y, n_iter = 8000, n_chains = 8, seed = 1,
+                           backend = "cpu")
+result
+```
+
+The printed object is the technical diagnostic: the detected support and
+modality, the selected family, a convergence and goodness-of-fit verdict
+(R-hat and the Kolmogorov-Smirnov distance of the fitted CDF against the
+empirical), and the full ranking. The waiting times are bimodal, the dip
+test rejects unimodality, and the catalogue selects the two-component
+Gaussian mixture. The mixture is initialised with its components at the
+lower and upper data quartiles and its means carry a data-anchored prior,
+so the components start separated on the two modes and the gradient sampler
+mixes cleanly within each; the draws are then relabeled so the
+lower-location component is reported first. Every family is fit in an
+unconstrained parametrisation, so the sampler never proposes an invalid
+scale or shape.
+
+## 2. Visual inspection
+
+The `plot()` method is the visual companion: the fitted density over the
+histogram (observed against generated), the QQ plot of empirical against
+fitted quantiles, and the ranking of the candidates.
+
+```{r, fig.height = 3.2}
+plot(result)
+```
+
+The mixture density should sit on both humps of the histogram, the QQ
+points should track the diagonal, and the ranking bar should show the
+mixture clearly ahead of the unimodal families that cannot represent two
+modes.
+
+## 3. The fitted CDF is the transform to the unit square
+
+The winner carries a fitted cumulative distribution, the
+probability-integral transform. Where the copula vignette used ranks,
+here the explicit fitted CDF carries the column onto the unit interval,
+and the two agree closely when the marginal is well chosen.
+
+```{r}
+u_fitted <- marginal_cdf(result, y)
+u_rank <- rank(y) / (length(y) + 1)
+plot(u_rank, u_fitted, pch = 16, cex = 0.6,
+     col = grDevices::adjustcolor("black", 0.5),
+     xlab = "rank transform", ylab = "fitted-CDF transform",
+     main = "The two probability-integral transforms agree")
+abline(0, 1, col = "firebrick", lwd = 1.5, lty = 2)
+```
+
+## 4. The full Sklar workflow on two columns
+
+With a fitted marginal per column, the dependence is modelled on the
+fitted-CDF transforms rather than the ranks, so the marginals and the
+copula together form one explicit model. Take the two variables of the
+`airquality` temperature and ozone pair, each given its own automatically
+selected marginal, then joined by an automatically selected copula.
+
+```{r}
+aq <- airquality[stats::complete.cases(airquality[, c("Temp", "Ozone")]), ]
+m_temp <- gpum_fit_catalog(aq$Temp, n_iter = 6000, n_chains = 8, seed = 1,
+                           backend = "cpu")
+m_ozone <- gpum_fit_catalog(aq$Ozone, n_iter = 6000, n_chains = 8, seed = 1,
+                            backend = "cpu")
+c(temperature = m_temp$best, ozone = m_ozone$best)
+```
+
+```{r}
+# Transform each column by its fitted CDF, then fit the copula on the
+# normal scores of those transforms.
+clamp <- function(p) pmin(pmax(p, 1e-4), 1 - 1e-4)
+u <- clamp(marginal_cdf(m_temp, aq$Temp))
+v <- clamp(marginal_cdf(m_ozone, aq$Ozone))
+cop <- gpum_copula(data.frame(u = qnorm(u), v = qnorm(v)),
+                   family = "auto", n_iter = 8000, n_chains = 8, seed = 1,
+                   backend = "cpu")
+cop
+```
+
+The joint model now has three named pieces: the marginal of temperature,
+the marginal of ozone, and the copula that binds them, each selected by
+the data. This is the complete factorisation Sklar's theorem promises,
+and it is what the synthesis release will sample from to generate
+synthetic records.
+
+## 5. Where this stops
+
+The catalogue here fits one column at a time and covers the common
+continuous families plus the two-component Gaussian mixture; the full
+catalogue design lists more families and the discrete tier. The mixture
+handles bimodality; higher-order multimodality needs the three-component
+mixture, and a dependence structure that is itself a mixture is a copula
+question, not a marginal one. The fitted CDF is a plug-in at the
+posterior mean; a fully Bayesian transform would average the CDF over the
+posterior draws, which the synthesis release will use where the extra
+fidelity matters.

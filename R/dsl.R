@@ -13,7 +13,7 @@
 .gpum_op <- c(
   PUSH_CONST = 0L, PUSH_PARAM = 1L, PUSH_DATA = 2L,
   ADD = 3L, SUB = 4L, MUL = 5L, DIV = 6L, NEG = 7L,
-  EXP = 8L, LOG = 9L, SQRT = 10L, POW = 11L
+  EXP = 8L, LOG = 9L, SQRT = 10L, POW = 11L, LGAMMA = 12L
 )
 
 # Maximum operand-stack depth of the interpreter kernel (STACK_SIZE).
@@ -100,9 +100,11 @@
         unary_fn(.gpum_op["LOG"])
       } else if (fn == "sqrt") {
         unary_fn(.gpum_op["SQRT"])
+      } else if (fn == "lgamma") {
+        unary_fn(.gpum_op["LGAMMA"])
       } else {
         stop("unsupported function in the log-density: '", fn,
-             "'. Supported: + - * / ^ exp log sqrt.", call. = FALSE)
+             "'. Supported: + - * / ^ exp log sqrt lgamma.", call. = FALSE)
       }
     } else {
       stop("unsupported term in the log-density expression.", call. = FALSE)

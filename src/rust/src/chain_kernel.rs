@@ -40,6 +40,24 @@ fn rand_uniform(seedmix: u32, ctr: u32) -> f32 {
     (f32::cast_from(h) + 0.5) / 4294967296.0
 }
 
+/// Log-gamma on the GPU by Stirling's series after shifting the argument up
+/// past 8 with the recurrence lgamma(x) = lgamma(x + 1) - ln(x). The f32
+/// precision here matches the kernel's f32 density path; the CPU backend
+/// keeps the higher-precision Lanczos form.
+#[cube]
+fn lgamma(x_in: f32) -> f32 {
+    let mut x = x_in;
+    let mut corr = 0.0f32;
+    while x < 8.0 {
+        corr = corr - x.ln();
+        x = x + 1.0;
+    }
+    let inv = 1.0 / x;
+    let inv2 = inv * inv;
+    let ln2pi = 1.837_877_1f32;
+    (x - 0.5) * x.ln() - x + 0.5 * ln2pi + inv / 12.0 - inv * inv2 / 360.0 + corr
+}
+
 /// Run one bytecode program once and return the scalar result. A program with
 /// no instructions returns zero.
 #[cube]
@@ -86,6 +104,8 @@ fn vm_eval(
             stack[sp - 1] = stack[sp - 1].ln();
         } else if op == 10 {
             stack[sp - 1] = stack[sp - 1].sqrt();
+        } else if op == 12 {
+            stack[sp - 1] = lgamma(stack[sp - 1]);
         } else {
             stack[sp - 2] = stack[sp - 2].powf(stack[sp - 1]);
             sp -= 1;

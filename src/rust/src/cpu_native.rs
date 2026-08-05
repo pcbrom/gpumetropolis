@@ -27,6 +27,55 @@ fn rand_uniform(seedmix: u32, ctr: u32) -> f64 {
     (triple32(seedmix.wrapping_add(ctr)) as f64 + 0.5) / 4294967296.0
 }
 
+/// Log-gamma by the Lanczos approximation (g = 7, nine coefficients),
+/// accurate to about 1e-15 for x > 0, with the reflection formula for
+/// x < 0.5. The bytecode `lgamma` opcode maps here; shape parameters of the
+/// catalogue densities are positive, so the reflection branch is a guard.
+pub(crate) fn lgamma_fn(x: f64) -> f64 {
+    const G: f64 = 7.0;
+    const C: [f64; 9] = [
+        0.999_999_999_999_809_93,
+        676.520_368_121_885_1,
+        -1_259.139_216_722_402_8,
+        771.323_428_777_653_13,
+        -176.615_029_162_140_59,
+        12.507_343_278_686_905,
+        -0.138_571_095_265_720_12,
+        9.984_369_578_019_571_6e-6,
+        1.505_632_735_149_311_6e-7,
+    ];
+    if x < 0.5 {
+        // Reflection: lgamma(x) = ln(pi / sin(pi x)) - lgamma(1 - x).
+        let pi = std::f64::consts::PI;
+        (pi / (pi * x).sin()).abs().ln() - lgamma_fn(1.0 - x)
+    } else {
+        let x = x - 1.0;
+        let mut a = C[0];
+        let t = x + G + 0.5;
+        for (i, &ci) in C.iter().enumerate().skip(1) {
+            a += ci / (x + i as f64);
+        }
+        0.5 * (2.0 * std::f64::consts::PI).ln() + (x + 0.5) * t.ln() - t + a.ln()
+    }
+}
+
+/// Digamma (derivative of log-gamma), by the asymptotic series after
+/// shifting the argument up past 6 with the recurrence
+/// psi(x) = psi(x + 1) - 1/x. Backs the reverse-mode derivative of the
+/// `lgamma` opcode.
+pub(crate) fn digamma_fn(x: f64) -> f64 {
+    let mut x = x;
+    let mut result = 0.0f64;
+    while x < 6.0 {
+        result -= 1.0 / x;
+        x += 1.0;
+    }
+    // psi(x) ~ ln(x) - 1/(2x) - 1/(12 x^2) + 1/(120 x^4) - 1/(252 x^6).
+    let f = 1.0 / (x * x);
+    result + x.ln() - 1.0 / (2.0 * x)
+        - f * (1.0 / 12.0 - f * (1.0 / 120.0 - f * (1.0 / 252.0)))
+}
+
 /// Run one bytecode program once; an empty program returns zero.
 fn vm_eval(code: &[u32], consts: &[f64], params: &[f64], data: &[f64],
            data_base: usize) -> f64 {
@@ -50,6 +99,7 @@ fn vm_eval(code: &[u32], consts: &[f64], params: &[f64], data: &[f64],
             8 => { stack[sp - 1] = stack[sp - 1].exp(); }
             9 => { stack[sp - 1] = stack[sp - 1].ln(); }
             10 => { stack[sp - 1] = stack[sp - 1].sqrt(); }
+            12 => { stack[sp - 1] = lgamma_fn(stack[sp - 1]); }
             _ => { stack[sp - 2] = stack[sp - 2].powf(stack[sp - 1]); sp -= 1; }
         }
     }
@@ -126,14 +176,15 @@ fn vm_eval_grad(code: &[u32], consts: &[f64], params: &[f64], data: &[f64],
                 istack[sp] = pc as u32;
                 sp += 1;
             }
-            7..=10 => {
+            7..=10 | 12 => {
                 let l = istack[sp - 1] as usize;
                 let x = work.vals[l];
                 work.vals[pc] = match op {
                     7 => -x,
                     8 => x.exp(),
                     9 => x.ln(),
-                    _ => x.sqrt(),
+                    10 => x.sqrt(),
+                    _ => lgamma_fn(x),
                 };
                 work.lhs[pc] = l as u32;
                 work.rhs[pc] = u32::MAX;
@@ -207,6 +258,10 @@ fn vm_eval_grad(code: &[u32], consts: &[f64], params: &[f64], data: &[f64],
             }
             10 => {
                 work.adj[work.lhs[pc] as usize] += g * 0.5 / work.vals[pc];
+            }
+            12 => {
+                let l = work.lhs[pc] as usize;
+                work.adj[l] += g * digamma_fn(work.vals[l]);
             }
             _ => {
                 let l = work.lhs[pc] as usize;

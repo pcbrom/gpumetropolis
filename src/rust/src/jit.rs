@@ -28,6 +28,12 @@ extern "C" fn jit_log(x: f64) -> f64 {
 extern "C" fn jit_pow(b: f64, e: f64) -> f64 {
     b.powf(e)
 }
+extern "C" fn jit_lgamma(x: f64) -> f64 {
+    crate::cpu_native::lgamma_fn(x)
+}
+extern "C" fn jit_digamma(x: f64) -> f64 {
+    crate::cpu_native::digamma_fn(x)
+}
 
 /// A JIT-compiled log-likelihood. The native function is valid while the
 /// `JITModule` it lives in is kept alive.
@@ -98,6 +104,8 @@ pub fn compile_grad(code: &[u32], consts: &[f64], n_params: usize)
     jb.symbol("gpum_exp", jit_exp as *const u8);
     jb.symbol("gpum_log", jit_log as *const u8);
     jb.symbol("gpum_pow", jit_pow as *const u8);
+    jb.symbol("gpum_lgamma", jit_lgamma as *const u8);
+    jb.symbol("gpum_digamma", jit_digamma as *const u8);
     let mut module = JITModule::new(jb);
 
     let mut sig_un = module.make_signature();
@@ -116,6 +124,12 @@ pub fn compile_grad(code: &[u32], consts: &[f64], n_params: usize)
         .map_err(|e| e.to_string())?;
     let pow_id = module
         .declare_function("gpum_pow", Linkage::Import, &sig_bin)
+        .map_err(|e| e.to_string())?;
+    let lgamma_id = module
+        .declare_function("gpum_lgamma", Linkage::Import, &sig_un)
+        .map_err(|e| e.to_string())?;
+    let digamma_id = module
+        .declare_function("gpum_digamma", Linkage::Import, &sig_un)
         .map_err(|e| e.to_string())?;
 
     let mut sig = module.make_signature();
@@ -136,6 +150,8 @@ pub fn compile_grad(code: &[u32], consts: &[f64], n_params: usize)
         let exp = module.declare_func_in_func(exp_id, b.func);
         let log = module.declare_func_in_func(log_id, b.func);
         let pow = module.declare_func_in_func(pow_id, b.func);
+        let lgamma = module.declare_func_in_func(lgamma_id, b.func);
+        let digamma = module.declare_func_in_func(digamma_id, b.func);
 
         let entry = b.create_block();
         let header = b.create_block();
@@ -199,7 +215,7 @@ pub fn compile_grad(code: &[u32], consts: &[f64], n_params: usize)
                     b.ins().load(types::F64, MemFlags::trusted(), row_addr,
                                  (arg * 8) as i32)
                 }
-                7..=10 => {
+                7..=10 | 12 => {
                     let l = istack.pop().unwrap();
                     lhs[pc] = l;
                     istack.push(pc);
@@ -214,7 +230,11 @@ pub fn compile_grad(code: &[u32], consts: &[f64], n_params: usize)
                             let call = b.ins().call(log, &[x]);
                             b.inst_results(call)[0]
                         }
-                        _ => b.ins().sqrt(x),
+                        10 => b.ins().sqrt(x),
+                        _ => {
+                            let call = b.ins().call(lgamma, &[x]);
+                            b.inst_results(call)[0]
+                        }
                     }
                 }
                 _ => {
@@ -343,6 +363,16 @@ pub fn compile_grad(code: &[u32], consts: &[f64], n_params: usize)
                     bump(&mut b, &mut a, gl);
                     adj[l] = a;
                 }
+                12 => {
+                    // d/dx lgamma(x) = digamma(x).
+                    let l = lhs[pc];
+                    let call = b.ins().call(digamma, &[vals[l]]);
+                    let dg = b.inst_results(call)[0];
+                    let gl = b.ins().fmul(g, dg);
+                    let mut a = adj[l].take();
+                    bump(&mut b, &mut a, gl);
+                    adj[l] = a;
+                }
                 _ => {
                     let (l, r) = (lhs[pc], rhs[pc]);
                     // d/da a^b = b * a^(b-1)
@@ -414,6 +444,7 @@ pub fn compile_loglik(code: &[u32], consts: &[f64]) -> Result<JitLoglik, String>
     jb.symbol("gpum_exp", jit_exp as *const u8);
     jb.symbol("gpum_log", jit_log as *const u8);
     jb.symbol("gpum_pow", jit_pow as *const u8);
+    jb.symbol("gpum_lgamma", jit_lgamma as *const u8);
     let mut module = JITModule::new(jb);
 
     let mut sig_un = module.make_signature();
@@ -432,6 +463,9 @@ pub fn compile_loglik(code: &[u32], consts: &[f64]) -> Result<JitLoglik, String>
         .map_err(|e| e.to_string())?;
     let pow_id = module
         .declare_function("gpum_pow", Linkage::Import, &sig_bin)
+        .map_err(|e| e.to_string())?;
+    let lgamma_id = module
+        .declare_function("gpum_lgamma", Linkage::Import, &sig_un)
         .map_err(|e| e.to_string())?;
 
     let mut sig = module.make_signature();
@@ -452,6 +486,7 @@ pub fn compile_loglik(code: &[u32], consts: &[f64]) -> Result<JitLoglik, String>
         let exp = module.declare_func_in_func(exp_id, b.func);
         let log = module.declare_func_in_func(log_id, b.func);
         let pow = module.declare_func_in_func(pow_id, b.func);
+        let lgamma = module.declare_func_in_func(lgamma_id, b.func);
 
         let entry = b.create_block();
         let header = b.create_block();
@@ -545,6 +580,11 @@ pub fn compile_loglik(code: &[u32], consts: &[f64]) -> Result<JitLoglik, String>
                 10 => {
                     let v = stack.pop().unwrap();
                     stack.push(b.ins().sqrt(v));
+                }
+                12 => {
+                    let v = stack.pop().unwrap();
+                    let call = b.ins().call(lgamma, &[v]);
+                    stack.push(b.inst_results(call)[0]);
                 }
                 _ => {
                     let e = stack.pop().unwrap();
