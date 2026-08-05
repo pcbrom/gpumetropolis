@@ -1,0 +1,204 @@
+---
+title: "Case study: copula dependence between temperature and ozone"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Case study: copula dependence between temperature and ozone}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>",
+                      fig.width = 7, fig.height = 5)
+```
+
+A correlation coefficient answers one question: how much do two variables
+move together on average. It is silent on a different question that often
+matters more: do they move together in the extremes. Two variables can
+share a modest correlation and still spike together in their upper tails,
+or be nearly independent in the body and coupled only when both are large.
+A copula separates that dependence structure from the marginal shapes and
+lets it be read directly. This case study fits a bivariate copula to a
+real pair, the daily maximum temperature and ozone concentration at a New
+York monitoring station (the `airquality` data), and asks not only how
+strong the dependence is but where in the joint distribution it lives. The
+answer overturns what the raw scatter appears to show, which is the
+lesson.
+
+```{r}
+library(gpumetropolis)
+aq <- airquality[stats::complete.cases(airquality[, c("Temp", "Ozone")]), ]
+x <- aq$Temp
+y <- aq$Ozone
+plot(x, y, pch = 16, col = grDevices::adjustcolor("black", 0.5),
+     xlab = "temperature (F)", ylab = "ozone (ppb)",
+     main = "Ozone against temperature, New York, 1973")
+```
+
+The scatter suggests both a positive trend and a fan: the hottest days
+carry not just higher ozone but a wider and higher spread. The eye reads
+that fan as a hint of upper-tail dependence, extremes travelling together
+at the top. That reading is a hypothesis, and the copula is what tests it;
+the answer below is not the one the scatter suggests, which is the point
+of the exercise.
+
+## 1. Pseudo-observations, the dependence stripped of the margins
+
+The copula lives on the unit square, and the data enter it as
+pseudo-observations: each value is replaced by its rank divided by
+`n + 1`, which maps the marginal to a uniform and leaves only the
+dependence. `gpum_copula()` does this internally; here is the picture it
+works from.
+
+```{r}
+u <- rank(x) / (length(x) + 1)
+v <- rank(y) / (length(y) + 1)
+plot(u, v, pch = 16, col = grDevices::adjustcolor("black", 0.5),
+     xlab = "u = rank(temperature)", ylab = "v = rank(ozone)",
+     main = "Pseudo-observations on the unit square")
+```
+
+The points look denser toward the upper-right corner than the lower-left,
+which would be upper-tail dependence. Whether that apparent asymmetry is
+real dependence or an artefact of the eye is what the formal comparison
+settles.
+
+## 2. Fitting with automatic family selection
+
+Rather than assume a family, `family = "auto"` fits all four candidates
+and selects the one preferred by predictive comparison (WAIC on the
+copula density, which is a proper density on the unit square). The choice
+of family is itself a hypothesis about tail behaviour, so letting the data
+choose is part of the answer.
+
+```{r}
+fit <- gpum_copula(data.frame(temp = x, ozone = y), family = "auto",
+                   n_iter = 12000, n_chains = 8, seed = 1, backend = "cpu")
+fit
+```
+
+The printed object is the technical diagnostic: the selected family, the
+dependence parameter and Kendall's tau with their credible intervals, the
+tail-dependence coefficients, and a verdict line that reports convergence
+(R-hat) and goodness of fit (whether the empirical Kendall tau falls
+inside the model's posterior band). The comparison table ranks the four
+families by WAIC.
+
+The data select Frank, not Gumbel. Frank is a symmetric, tail-independent
+copula: strong overall dependence (Kendall's tau near 0.56) with no
+concentration in either tail. The upper-tail hint the scatter suggested
+did not survive the comparison; the Gumbel family, which would impose
+upper-tail dependence, ranks below Frank on WAIC. The fan in the raw
+scatter was heteroscedasticity of the ozone margin, higher variance at
+high temperature, not a coupling of the extremes. This is the discipline
+the copula enforces: the dependence structure is read after the marginal
+shapes are removed by the ranks, and the eye's reading of the raw scatter,
+which mixes the two, is overruled.
+
+## 3. Reading the dependence
+
+Kendall's tau is the family-free summary, comparable across copulas; the
+tail-dependence coefficients are the extreme-co-movement probabilities.
+
+```{r}
+kendall_tau(fit)
+tail_dependence(fit)
+```
+
+Both tail-dependence coefficients are zero, the signature of the Frank
+family: temperature and ozone are strongly associated through the body of
+the distribution, but their extremes are asymptotically independent.
+Knowing that today is among the hottest on record does not, in the tail
+limit, make a record ozone reading more likely than the overall
+association already implies. That is a materially different risk statement
+from the upper-tail dependence the scatter suggested, and it is the copula,
+not the eye, that is entitled to make it.
+
+## 4. Visual inspection
+
+The `plot()` method is the visual companion of the printed diagnostic:
+the fitted density contours over the pseudo-observations, the posteriors
+of the parameter and of Kendall's tau against the empirical value, and the
+observed-against-generated check on the unit square.
+
+```{r}
+plot(fit)
+```
+
+The Frank contours are symmetric about the anti-diagonal, no corner
+favoured, the posterior of tau sits on the empirical mark, and the
+generated blue cloud overlays the observed black one. That overlay is the
+confirmation that a symmetric, tail-independent copula reproduces the
+observed dependence; had the upper tail been genuinely coupled, the
+generated cloud would fall short of the observed points in the upper-right
+corner.
+
+## 5. Against the classical estimator
+
+The `copula` package fits the same families by maximum pseudo-likelihood.
+The Bernstein-von Mises theorem says the Bayesian posterior mean and the
+maximum-likelihood estimate must agree for a regular model at this sample
+size; the check confirms the fit is not an artefact of the sampler.
+
+```{r}
+if (requireNamespace("copula", quietly = TRUE)) {
+  cop <- switch(fit$family,
+    gumbel = copula::gumbelCopula(), clayton = copula::claytonCopula(),
+    frank = copula::frankCopula(), gaussian = copula::normalCopula())
+  ml <- copula::fitCopula(cop, cbind(u, v), method = "mpl")
+  cat(sprintf("family %s: posterior mean %.3f vs pseudo-MLE %.3f\n",
+              fit$family, fit$param["mean"], as.numeric(coef(ml))))
+  cat(sprintf("Kendall tau: posterior %.3f vs empirical %.3f\n",
+              fit$tau["mean"], fit$tau_empirical))
+}
+```
+
+## 6. Forcing the eye's hypothesis, and seeing it rejected
+
+The scatter argued for upper-tail dependence, which is the Gumbel family.
+Fitting Gumbel by force shows what imposing that hypothesis would claim,
+and the comparison of step 2 already recorded that it fits worse. Read the
+two side by side: Gumbel would assert a positive upper tail-dependence
+coefficient the data do not support, at a worse WAIC, while agreeing with
+Frank on the overall strength.
+
+```{r}
+fit_gumbel <- gpum_copula(data.frame(temp = x, ozone = y),
+                          family = "gumbel", n_iter = 8000, n_chains = 8,
+                          seed = 1, backend = "cpu")
+rbind(
+  selected_frank = c(tau = fit$tau["mean"],
+                     tail_upper = fit$tail_upper["mean"]),
+  forced_gumbel = c(tau = fit_gumbel$tau["mean"],
+                    tail_upper = fit_gumbel$tail_upper["mean"])
+)
+```
+
+The two families agree on the overall strength of dependence and disagree
+on where it lives: Frank places none in the tails, Gumbel would place a
+substantial share in the upper tail. Choosing the family is choosing a
+hypothesis about the extremes, and the copula workflow makes that choice an
+inference the data adjudicate rather than an assumption the analyst
+imports.
+
+## 7. Where this stops
+
+The workflow here is bivariate. Three or more variables need the vine
+decomposition of a later release, which factors a high-dimensional
+dependence into a cascade of bivariate copulas, each of the kind fit
+here. The marginal distributions were handled non-parametrically through
+the ranks; the companion release on marginal auto-selection fits an
+explicit distribution to each column so the two halves of Sklar's theorem,
+margins and copula, are both modelled. And a caveat of method: heavy ties
+in either variable blur the pseudo-observations and the copula's
+identifiability (Genest and Neslehova 2007); the ozone and temperature
+readings here are near-continuous, so the ranks are clean.
+
+## References
+
+- Genest, C., Neslehova, J. (2007). A primer on copulas for count data.
+  *ASTIN Bulletin*, 37(2), 475-515.
+- Nelsen, R. B. (2006). *An Introduction to Copulas*, 2nd ed. Springer.
+- Sklar, A. (1959). Fonctions de repartition a n dimensions et leurs
+  marges. *Publications de l'Institut de Statistique de l'Universite de
+  Paris*, 8, 229-231.

@@ -254,7 +254,7 @@ pub fn compile_grad(code: &[u32], consts: &[f64], n_params: usize)
             };
             let op = code[2 * pc];
             let arg = code[2 * pc + 1] as usize;
-            let mut bump = |b: &mut FunctionBuilder, slot: &mut Option<Value>,
+            let bump = |b: &mut FunctionBuilder, slot: &mut Option<Value>,
                             v: Value| {
                 *slot = Some(match *slot {
                     Some(old) => b.ins().fadd(old, v),

@@ -1,3 +1,39 @@
+# gpumetropolis 0.6.0
+
+- The bivariate copula workflow. `gpum_copula(data, family)` fits a copula
+  to the pseudo-observations of two columns (average ranks rescaled to the
+  open unit square), so the fit is invariant to the marginal shapes and
+  isolates the dependence structure. Four families cover the qualitative
+  range: Gumbel (upper-tail dependence), Clayton (lower-tail), Frank
+  (symmetric, tail-independent) and Gaussian (elliptical, tail-independent,
+  and the one family carrying the sign of the dependence). Each family's
+  log-density compiles to the existing DSL with everything data-only
+  precomputed in R, so no engine change is needed.
+- Family auto-selection is part of the workflow: `family = "auto"` (the
+  default) fits every candidate and returns the one preferred by predictive
+  comparison (WAIC by default, PSIS-LOO optional), with the full ranking
+  table, because the choice of family is a hypothesis about tail behaviour
+  and belongs with the fit. A family whose chains do not converge is
+  withheld from the ranking rather than trusted.
+- The sampler defaults to `method = "mala"`: the copula log-density is
+  smooth and one-dimensional in the raw parameter, and the Frank family in
+  particular has a flat far tail in which a random walk strands a chain,
+  which the gradient path avoids. Validated against the `copula` package:
+  the posterior recovers the maximum-pseudo-likelihood estimate and the
+  analytic Kendall tau for all four families.
+- `kendall_tau()` and `tail_dependence()` return the posterior of the
+  family-free dependence summaries; the object carries both a text
+  diagnostic (`print`: dependence summaries, convergence R-hat, and
+  empirical-versus-model Kendall tau goodness of fit) and a visual one
+  (`plot`: fitted density contours over the pseudo-observations, the
+  parameter and tau posteriors against the empirical value, and the
+  observed-against-generated check).
+- New case-study vignette `case_copula`: the temperature and ozone pair of
+  the `airquality` data. The raw scatter suggests upper-tail dependence, the
+  formal comparison selects the symmetric tail-independent Frank family, and
+  the vignette reads the lesson that the apparent fan was marginal
+  heteroscedasticity rather than a coupling of the extremes.
+
 # gpumetropolis 0.5.3
 
 - Inference beyond i.i.d. data, organised by the conditional-factorisation

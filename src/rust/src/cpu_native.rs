@@ -531,7 +531,7 @@ pub fn run(
             let mut vbuf = vec![0.0f64; n_params];
             // Value and gradient in one pass: the compiled data term plus
             // the interpreted prior term (a handful of ops, no data loop).
-            let mut lp_grad = |params: &[f64], grad: &mut [f64],
+            let lp_grad = |params: &[f64], grad: &mut [f64],
                                work: &mut GradWork| -> f64 {
                 match &jit_grad {
                     Some(jg) => {

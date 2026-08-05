@@ -1,6 +1,6 @@
 Package: gpumetropolis
 Title: GPU-Portable Vendor-Agnostic Metropolis-Hastings Sampler
-Version: 0.5.3
+Version: 0.6.0
 Authors@R:
     person("Pedro", "Carvalho Brom", , "pcbrom@gmail.com",
            role = c("aut", "cre", "cph"),
@@ -36,7 +36,8 @@ Suggests:
     MCMCpack,
     mcmc,
     nimble,
-    BayesianTools
+    BayesianTools,
+    copula
 Config/testthat/edition: 3
 VignetteBuilder: knitr
 URL: https://github.com/pcbrom/gpumetropolis

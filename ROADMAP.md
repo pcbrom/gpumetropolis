@@ -192,8 +192,13 @@ discrete deliverable, validated before the next opens.
   and the `case_nile_timeseries` vignette exercises the whole layer on
   the Nile flow with the 1898 level shift. Declared boundary: latent
   recursions and matrix-coupled likelihoods wait for the matrix-DSL tier.
-- 0.6.0: bivariate copula workflow with the four common families and
-  automatic family selection by predictive comparison.
+- 0.6.0 (delivered 2026-08-05): bivariate copula workflow with the four
+  common families (Gumbel, Clayton, Frank, Gaussian) and automatic family
+  selection by predictive comparison, `gpum_copula()`. Posterior of the
+  dependence parameter, Kendall's tau and the tail-dependence coefficients,
+  with a text diagnostic and a visual `plot` method; validated against the
+  `copula` package on all four families. Case-study vignette
+  `case_copula`.
 - 0.7.0: per-column marginal auto-selection.
 - 0.8.0: vine copula for `d > 2`.
 - 0.9.0: synthesis, `generate(fit, n)`.
