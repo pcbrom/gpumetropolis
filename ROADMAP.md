@@ -312,22 +312,83 @@ HMC/NUTS, and `gpumetropolis` makes no claim against them in that regime.
 After 1.0.0 the orientation shifts. The post-1.0.0 trajectory aims at
 genuine state-of-the-art status in the narrower intersection that the
 package occupies: **MCMC plus vendor-agnostic GPU portability plus
-copula-driven synthesis**. Two candidate directions, to be decided when
-the 1.0.0 release lands:
+copula-driven synthesis**. Several candidate directions, to be decided
+when the 1.0.0 release lands:
 
-- **HMC and NUTS** as a parallel sampler in the package, which would
-  reopen decision 3 of `BRIEFING.md` (automatic differentiation). The
-  cost is the AD machinery on the bytecode and the kernel; the benefit
-  is matching `Stan` on differentiable targets while keeping the
-  many-chains GPU axis.
-- **Hold the no-AD line and double down on the niche**: make the copula
+- **HMC and NUTS** as a parallel sampler in the package. The
+  reverse-mode automatic differentiation of the bytecode already landed
+  in v0.5.2 on the CPU (it drives `method = "mala"`), so the remaining
+  cost is the gradient kernel on the GPU and the NUTS integrator itself;
+  the benefit is matching `Stan` on differentiable targets while keeping
+  the many-chains GPU axis.
+- **Hold the line and double down on the niche**: make the copula
   synthesis path through vines and parallel tempering the best
   implementation in any language, on GPU, with explicit support for
   large `d` through vine decomposition and large `n` through the
   data-parallel kernel. The state of the art here is currently
   scattered across small specialised packages; a single coherent path
   has room.
+- **Copula-as-interlingua for controllable synthetic text (research
+  direction, novelty unconfirmed).** Extend the copula synthesis engine
+  from numeric datasets to text corpora for LLM training and evaluation.
+  The copula is the pivot representation: text is mapped to a vector of
+  interpretable attributes, the copula (or the dataset-level plus
+  per-entry hierarchical copula) is estimated on the pseudo-observations,
+  synthetic attribute vectors are sampled preserving that copula, and a
+  fixed LLM is conditioned to realise them, with a consistency check that
+  closes the loop. The check plus resampling is exactly an ABC-MCMC step
+  with the LLM as the simulator, so the package's Metropolis engine is
+  the corrector; the discrepancy for copula fidelity must live in the
+  rank space (the copula is invariant to monotone marginal transforms,
+  the embedding geometry is not), while embedding distance serves the
+  separate in-distribution and novelty checks. The trainable object is
+  the copula-to-instruction bridge, a small conditional prompt policy,
+  optimised by expected rank-space distance over all generated samples
+  (not the accepted subset, which biases toward the easy region) through
+  the same Robbins-Monro stochastic approximation the adaptive warmup
+  already runs. Known limits to state up front: the guarantee is a
+  projection onto the measured attributes, with the residual filled by
+  the LLM prior; discrete attributes break Sklar uniqueness (Genest and
+  Neslehova 2007); optimisation weaponises Goodhart on the extractor, so
+  held-out and ensembled extractors are mandatory; there is an
+  irreducible tolerance floor `epsilon*` from the LLM stochasticity and
+  the information bottleneck. First experiment: estimate `epsilon*`
+  empirically for a fixed extractor and generator. Scope boundary: the
+  package owns the statistical core (copula estimation, vine, hierarchical
+  copula, synthesis) and the ABC/Metropolis corrector; the text encoder
+  and the LLM generator are an external companion stack, consistent with
+  the recorded boundary that neural generative models are not built on
+  this engine. Novelty is not established: the components are mature or
+  recently published (copula synthesis for tabular data; the LLM as an
+  ABC simulator, arXiv 2509.19375, 2025; distance-based prompt-policy
+  calibration against reward over-optimisation, arXiv 2404.19409, 2024),
+  and only the specific assembly and its theory appear unclaimed. A
+  systematic literature review, not the informal search of 2026-08-05,
+  is a gate before any contribution claim. Direction recorded 2026-08-05.
+- **Cancellation-guided mixed precision (optimisation milestone, pulled
+  on demand).** Reduce the precision of the per-observation log-density
+  evaluation (f16 or f8, exploiting the tensor units of Blackwell-class
+  GPUs) while preserving the precision of the acceptance decision. The
+  key is to reformulate the Metropolis ratio as the term-wise sum of
+  differences, `sum_i (loglik_i(prop) - loglik_i(cur))`, each term of
+  order one, which removes the catastrophic cancellation of subtracting
+  two large sums, and to accumulate in high precision (compensated or
+  tree summation). A `precision=` argument would expose the trade-off,
+  with the tolerance given by the cancellation pressure `ULP / |delta|`
+  and the posterior bias bounded by `O(epsilon)` in total variation
+  (Markov-chain perturbation theory: Rudolf and Schweizer; Johndrow et
+  al.). Preliminary experiment (2026-08-05): f32 already matches f64 and
+  the exact posterior in the mean, the variance and the tail up to
+  `N` of order `1e6`, with a tenfold speedup; the pressure grows linearly
+  in `N`, so the naive formulation breaks near `N = 1e7` for f32 and
+  almost immediately for f16, which makes the term-wise difference the
+  prerequisite rather than an option. Scope: the term-wise-difference
+  kernel, the `precision=` argument, and an f64/f32/f16 benchmark on the
+  bias-against-speed protocol of that experiment. Boundary: the
+  acceptance precision never drops below what bounds the target bias; the
+  gain is from a cheap evaluation plus a costly accumulation, not from a
+  cheap acceptance. Direction recorded 2026-08-05.
 
-The concrete choice between these two directions is recorded as a
+The concrete choice among these directions is recorded as a
 post-1.0.0 decision, after 2026-11-02. The interim is the v0.4.0
 through v0.9.0 march already on the calendar.
