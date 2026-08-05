@@ -344,6 +344,47 @@ method      <- "pt"   # auto, because mixtures have multimodal posteriors
 Label switching is mitigated by ordering the components on `mu1 < mu2`
 at the posterior post-processing stage.
 
+### Decision: multimodal marginals route through parallel tempering (recorded 2026-08-05)
+
+The v0.6.0 copula workflow is unaffected by multimodal marginals: it fits
+the pseudo-observations, whose rank transform erases the marginal shape, so
+the copula parameter posterior is unimodal regardless of the margins (shown
+empirically, identical parameter posterior under uniform and strongly
+bimodal margins). Multimodality is a concern only for this layer, the
+explicit marginal fit, and the routing is fixed here so it is not reopened
+during implementation.
+
+- **Sampler.** A marginal flagged multimodal by the joint verdict is fit
+  with `method = "pt"`, the parallel tempering already in the package since
+  v0.3.0. The cold chain crosses the modes that a single random walk cannot,
+  the same mechanism validated on the bimodal M2 (amendment v0.9 of
+  `EXPERIMENT_PROTOCOL.md`, vignette `m2_parallel_tempering`). MALA is not a
+  substitute here: the gradient path mixes within a mode, not across a
+  barrier between modes.
+- **Relabeling.** Parallel tempering removes the barrier but not the label
+  symmetry, so the raw draws still switch component identities. The
+  post-processing orders the components at every draw, ascending in the
+  location parameter (`mu`), with the scale parameter as the tie-breaker
+  when two locations coincide, generalising the two-component `mu1 < mu2`
+  rule to `k` components. This is the same relabeling applied to the Old
+  Faithful mixture; without it the per-component summaries are meaningless
+  averages over swapped identities.
+- **Diagnostic and visual, both required.** Per the package rule that every
+  feature ships a text diagnostic and a visual inspection, a fitted
+  multimodal marginal reports, in text, the PT swap-acceptance rates
+  (adjacent temperatures near 0.234 is healthy) alongside the usual R-hat
+  and ESS after relabeling, and draws, as its visual, the fitted mixture
+  density overlaid on the data histogram plus the observed-against-generated
+  check. A high R-hat that survives relabeling signals residual label
+  switching or a mode the ladder failed to reach, and is reported rather
+  than hidden.
+- **Boundary.** This covers a multimodal marginal of a single column. A
+  dependence structure that is itself a mixture, or that switches regime
+  between the modes, is not a marginal question and is not addressed by this
+  routing; it belongs to the vine decomposition (v0.8.0) or a future
+  mixture-copula, and the copula `plot` method's observed-against-generated
+  panel is where such misspecification surfaces.
+
 ## Tier C: discrete
 
 ### Discrete, finite support
