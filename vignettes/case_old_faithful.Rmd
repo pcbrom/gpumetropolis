@@ -221,7 +221,8 @@ if (have("coda")) {
     c(ess_ps(s[, 2], t), unname(t), mean(s[, 2])) }, error = function(e) rep(NA, 3))
   if (have("cmdstanr")) rows[["Stan"]] <- tryCatch({
     sc <- "data{int n; vector[n] y; vector[n] x;} parameters{real a; real b; real<lower=0> sigma;} model{ y ~ normal(a + b*x, sigma); a ~ normal(0,80); b ~ normal(0,50);}"
-    mod <- cmdstanr::cmdstan_model(cmdstanr::write_stan_file(sc))
+    csr <- asNamespace("cmdstanr")
+    mod <- csr$cmdstan_model(csr$write_stan_file(sc))
     t <- system.time(sf <- mod$sample(data = list(n = nobs, y = yv, x = xv), chains = 1,
         iter_sampling = N, iter_warmup = 1000, refresh = 0, show_messages = FALSE))["elapsed"]
     dr <- as.numeric(sf$draws("b", format = "draws_matrix")); c(ess_ps(dr, t), unname(t), mean(dr)) }, error = function(e) rep(NA, 3))

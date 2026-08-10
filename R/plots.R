@@ -242,7 +242,7 @@ plot.gpum_rope <- function(x, ...) {
 #' @export
 plot.gpum_crlb <- function(x, ...) {
   if (!isTRUE(x$applicable)) {
-    plot.new()
+    graphics::plot.new()
     graphics::text(0.5, 0.5, paste0("Cramer-Rao reference not applicable:\n",
                                     x$note), cex = 0.9)
     return(invisible(x))
